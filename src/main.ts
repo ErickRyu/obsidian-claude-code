@@ -6,6 +6,7 @@ import {
   COMMAND_SEND_SELECTION,
   COMMAND_SEND_FILE,
   COMMAND_FOCUS_TERMINAL,
+  COMMAND_NEW_TERMINAL,
 } from "./constants";
 import { ClaudeTerminalView, wrapBackticks } from "./claude-terminal-view";
 import {
@@ -157,6 +158,12 @@ export default class ClaudeTerminalPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: COMMAND_NEW_TERMINAL,
+      name: "New Claude Code terminal",
+      callback: () => this.createNewTerminal(),
+    });
+
     this.addSettingTab(new ClaudeTerminalSettingTab(this.app, this));
   }
 
@@ -183,11 +190,20 @@ export default class ClaudeTerminalPlugin extends Plugin {
     );
 
     if (existing.length > 0) {
+      // Prefer the most recently active terminal
+      const activeTerminal = this.app.workspace.getActiveViewOfType(ClaudeTerminalView);
+      if (activeTerminal) {
+        return activeTerminal;
+      }
       const leaf = existing[0];
       this.app.workspace.revealLeaf(leaf);
       return leaf.view as ClaudeTerminalView;
     }
 
+    return this.createNewTerminal();
+  }
+
+  private async createNewTerminal(): Promise<ClaudeTerminalView | null> {
     const leaf = this.app.workspace.getRightLeaf(false);
     if (!leaf) return null;
 
