@@ -11,24 +11,41 @@ Embed Claude Code as an interactive terminal right in Obsidian's sidebar. Open i
 - **Theme sync** — Terminal colors automatically match your Obsidian theme (dark/light)
 - **Configurable** — Claude CLI path, font size, font family, extra CLI args, working directory override
 
+## Prerequisites
+
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and available in your PATH
+- Obsidian 1.5.0+ (desktop only, not available on mobile)
+
 ## Installation
 
-### From source (recommended for now)
+### Via BRAT (recommended)
+
+1. Install the [BRAT plugin](https://github.com/TfTHacker/obsidian42-brat)
+2. Open BRAT settings and click "Add Beta Plugin"
+3. Enter `ErickRyu/obsidian-claude-code`
+4. Enable the plugin in Community Plugins settings
+
+The plugin will automatically download the required native module (node-pty) for your platform on first launch.
+
+### Manual installation
+
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/ErickRyu/obsidian-claude-code/releases/latest)
+2. Create a folder `.obsidian/plugins/obsidian-claude-code/` in your vault
+3. Copy the downloaded files into that folder
+4. Enable the plugin in Obsidian settings
+
+The plugin will attempt to download the node-pty native binary automatically. If auto-download fails, download the appropriate `node-pty-{platform}.tar.gz` from the release page and extract it into the plugin folder.
+
+### From source
 
 ```bash
-git clone https://github.com/sungjin/obsidian-claude-code.git
+git clone https://github.com/ErickRyu/obsidian-claude-code.git
 cd obsidian-claude-code
 npm install
 npm run build
 ```
 
-Copy `main.js`, `manifest.json`, `styles.css`, and the `node-pty` folder from `node_modules/node-pty` to your vault's `.obsidian/plugins/obsidian-claude-code/` directory.
-
-### Prerequisites
-
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed (`npm install -g @anthropic-ai/claude-code`)
-- Obsidian 1.5.0+ (desktop only)
-- Node.js build tools for native module compilation (`xcode-select --install` on macOS)
+Copy `main.js`, `manifest.json`, `styles.css`, and `node_modules/node-pty/` to your vault's `.obsidian/plugins/obsidian-claude-code/` directory.
 
 ## Commands
 

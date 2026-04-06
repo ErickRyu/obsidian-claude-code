@@ -13,6 +13,7 @@ import {
   ClaudeTerminalSettingTab,
   DEFAULT_SETTINGS,
 } from "./settings";
+import { ensureNodePty } from "./native-bootstrap";
 
 export default class ClaudeTerminalPlugin extends Plugin {
   settings: ClaudeTerminalSettings = DEFAULT_SETTINGS;
@@ -20,6 +21,12 @@ export default class ClaudeTerminalPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
+
+    // Auto-download node-pty native binary if missing
+    const pluginDir = this.getPluginDir();
+    ensureNodePty(pluginDir).catch(() => {
+      // Logged via Notice inside ensureNodePty
+    });
 
     this.registerView(VIEW_TYPE_CLAUDE_TERMINAL, (leaf) => {
       return new ClaudeTerminalView(
