@@ -44,6 +44,7 @@ export class ClaudeTerminalView extends ItemView {
     private readonly getPluginDir: () => string
   ) {
     super(leaf);
+    this.icon = "claude-ai";
   }
 
   getViewType(): string {
@@ -55,7 +56,7 @@ export class ClaudeTerminalView extends ItemView {
   }
 
   getIcon(): string {
-    return "terminal";
+    return "claude-ai";
   }
 
   getTerminalState(): TerminalState {
@@ -146,6 +147,10 @@ export class ClaudeTerminalView extends ItemView {
     });
 
     this.terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type === "keydown" && event.shiftKey && event.key === "Enter") {
+        this.terminalManager?.write("\n");
+        return false;
+      }
       if (event.type === "keydown" && event.metaKey && event.key === "v") {
         navigator.clipboard.readText().then((text) => {
           this.terminalManager?.write(text);
