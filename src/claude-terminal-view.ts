@@ -28,6 +28,8 @@ interface ReadyPromiseCallbacks {
 }
 
 export class ClaudeTerminalView extends ItemView {
+  private static nextInstanceId = 1;
+
   private terminal: Terminal | null = null;
   private fitAddon: FitAddon | null = null;
   private terminalManager: TerminalManager | null = null;
@@ -36,6 +38,7 @@ export class ClaudeTerminalView extends ItemView {
   private wrapperEl: HTMLElement | null = null;
   private state: TerminalState = TerminalState.Closed;
   private readyCallbacks: ReadyPromiseCallbacks[] = [];
+  private readonly instanceId: number;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -44,6 +47,8 @@ export class ClaudeTerminalView extends ItemView {
     private readonly getPluginDir: () => string
   ) {
     super(leaf);
+    this.icon = "claude-ai";
+    this.instanceId = ClaudeTerminalView.nextInstanceId++;
   }
 
   getViewType(): string {
@@ -51,11 +56,11 @@ export class ClaudeTerminalView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Claude Code";
+    return this.instanceId === 1 ? "Claude Code" : `Claude Code #${this.instanceId}`;
   }
 
   getIcon(): string {
-    return "terminal";
+    return "claude-ai";
   }
 
   getTerminalState(): TerminalState {
@@ -146,6 +151,10 @@ export class ClaudeTerminalView extends ItemView {
     });
 
     this.terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type === "keydown" && event.shiftKey && event.key === "Enter") {
+        this.terminalManager?.write("\n");
+        return false;
+      }
       if (event.type === "keydown" && event.metaKey && event.key === "v") {
         navigator.clipboard.readText().then((text) => {
           this.terminalManager?.write(text);
