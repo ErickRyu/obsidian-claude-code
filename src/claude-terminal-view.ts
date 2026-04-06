@@ -151,8 +151,18 @@ export class ClaudeTerminalView extends ItemView {
     });
 
     this.terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type === "keydown" && event.shiftKey && event.key === "Enter") {
-        this.terminalManager?.write("\n");
+      // Send kitty keyboard protocol sequence for Shift+Enter
+      // so Claude Code CLI recognizes it as multiline input.
+      // Use keyCode fallback for IME composition states where event.key may differ.
+      if (
+        event.type === "keydown" &&
+        event.shiftKey &&
+        !event.isComposing &&
+        (event.key === "Enter" || event.keyCode === 13 || event.code === "Enter")
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.terminalManager?.write("\x1b[13;2u");
         return false;
       }
       if (event.type === "keydown" && event.metaKey && event.key === "v") {
