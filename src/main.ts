@@ -19,6 +19,7 @@ import { ensureNodePty } from "./native-bootstrap";
 export default class ClaudeTerminalPlugin extends Plugin {
   settings: ClaudeTerminalSettings = DEFAULT_SETTINGS;
   private lastNonTerminalLeaf: WorkspaceLeaf | null = null;
+  private lastActiveTerminalLeaf: WorkspaceLeaf | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -45,13 +46,13 @@ export default class ClaudeTerminalPlugin extends Plugin {
       );
     });
 
-    // Track last non-terminal leaf for focus toggle
+    // Track last active leaves for focus toggle and send target
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", (leaf) => {
-        if (
-          leaf &&
-          leaf.view.getViewType() !== VIEW_TYPE_CLAUDE_TERMINAL
-        ) {
+        if (!leaf) return;
+        if (leaf.view.getViewType() === VIEW_TYPE_CLAUDE_TERMINAL) {
+          this.lastActiveTerminalLeaf = leaf;
+        } else {
           this.lastNonTerminalLeaf = leaf;
         }
       })
@@ -136,7 +137,6 @@ export default class ClaudeTerminalPlugin extends Plugin {
           return;
         }
 
-        const terminalLeaf = terminalLeaves[0];
         const activeView = this.app.workspace.getActiveViewOfType(
           ClaudeTerminalView
         );
@@ -151,9 +151,13 @@ export default class ClaudeTerminalPlugin extends Plugin {
           return;
         }
 
-        // Focus terminal
-        this.app.workspace.revealLeaf(terminalLeaf);
-        const view = terminalLeaf.view as ClaudeTerminalView;
+        // Focus the last active terminal, or the first one
+        const targetLeaf =
+          this.lastActiveTerminalLeaf && terminalLeaves.includes(this.lastActiveTerminalLeaf)
+            ? this.lastActiveTerminalLeaf
+            : terminalLeaves[0];
+        this.app.workspace.revealLeaf(targetLeaf);
+        const view = targetLeaf.view as ClaudeTerminalView;
         view.focusTerminal();
       },
     });
@@ -177,7 +181,14 @@ export default class ClaudeTerminalPlugin extends Plugin {
     );
 
     if (existing.length > 0) {
-      existing.forEach((leaf) => leaf.detach());
+      // If a terminal is focused, close only that one
+      const activeTerminal = this.app.workspace.getActiveViewOfType(ClaudeTerminalView);
+      if (activeTerminal) {
+        activeTerminal.leaf.detach();
+      } else {
+        // No terminal focused — close the most recent one
+        existing[existing.length - 1].detach();
+      }
       return;
     }
 
@@ -190,10 +201,11 @@ export default class ClaudeTerminalPlugin extends Plugin {
     );
 
     if (existing.length > 0) {
-      // Prefer the most recently active terminal
-      const activeTerminal = this.app.workspace.getActiveViewOfType(ClaudeTerminalView);
-      if (activeTerminal) {
-        return activeTerminal;
+      // Prefer the last active terminal (tracked across focus changes)
+      if (this.lastActiveTerminalLeaf && existing.includes(this.lastActiveTerminalLeaf)) {
+        const view = this.lastActiveTerminalLeaf.view as ClaudeTerminalView;
+        this.app.workspace.revealLeaf(this.lastActiveTerminalLeaf);
+        return view;
       }
       const leaf = existing[0];
       this.app.workspace.revealLeaf(leaf);

@@ -5,6 +5,7 @@ Embed Claude Code as an interactive terminal right in Obsidian's sidebar. Open i
 ## Features
 
 - **Sidebar terminal** — Claude Code runs in the right sidebar via xterm.js + node-pty
+- **Multi-tab support** — Open multiple Claude Code terminals simultaneously
 - **Send selection** — Select text in a note, run a command, and it appears in Claude's input with file path and line numbers
 - **Send current file** — Send the active file's path to Claude with one command
 - **Focus toggle** — Switch between editor and terminal without touching the mouse
@@ -51,7 +52,8 @@ Copy `main.js`, `manifest.json`, `styles.css`, and `node_modules/node-pty/` to y
 
 | Command | Description |
 |---------|-------------|
-| Toggle Claude Code terminal | Open/close the terminal sidebar |
+| Toggle Claude Code terminal | Open/close the active terminal |
+| New Claude Code terminal | Open an additional terminal tab |
 | Send selection to Claude | Send selected text with file context to Claude |
 | Send current file to Claude | Send `@filepath` to Claude |
 | Focus Claude Code terminal | Toggle focus between editor and terminal |
