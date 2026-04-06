@@ -147,7 +147,7 @@ export default class ClaudeTerminalPlugin extends Plugin {
   }
 
   async onunload(): Promise<void> {
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE_CLAUDE_TERMINAL);
+    // Don't detach leaves — Obsidian will reinitialize them on plugin update
   }
 
   private async toggleView(): Promise<void> {

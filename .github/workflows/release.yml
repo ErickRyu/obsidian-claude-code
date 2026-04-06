@@ -1,83 +1,77 @@
-name: Release
+name: Release Obsidian plugin
 
 on:
   push:
     tags:
       - "*"
 
-permissions:
-  contents: write
-
 jobs:
   build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18.x"
+
+      - name: Build plugin
+        run: |
+          npm install --ignore-scripts
+          npm run build
+
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release create "$tag" \
+            --title="$tag" \
+            --draft \
+            main.js manifest.json styles.css
+
+  build-native:
+    needs: build
     strategy:
       matrix:
         include:
           - os: macos-latest
-            arch: arm64
             platform: darwin-arm64
           - os: macos-13
-            arch: x64
             platform: darwin-x64
           - os: ubuntu-latest
-            arch: x64
             platform: linux-x64
           - os: windows-latest
-            arch: x64
             platform: win32-x64
-
     runs-on: ${{ matrix.os }}
-
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v3
         with:
-          node-version: "20"
+          node-version: "18.x"
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
+      - name: Install and rebuild node-pty
+        run: |
+          npm install --ignore-scripts
+          npx @electron/rebuild -v 34.2.0 -o node-pty
 
-      - name: Rebuild node-pty for Electron
-        run: npx @electron/rebuild -v 34.0.0 -o node-pty
-
-      - name: Build plugin
-        run: npm run build
-
-      - name: Package prebuilt binaries
+      - name: Package native binary
         shell: bash
         run: |
-          mkdir -p dist/${{ matrix.platform }}
-          cp -r node_modules/node-pty/build dist/${{ matrix.platform }}/
-          cp main.js dist/${{ matrix.platform }}/
-          cp manifest.json dist/${{ matrix.platform }}/
-          cp styles.css dist/${{ matrix.platform }}/
+          mkdir -p native/${{ matrix.platform }}
+          cp -r node_modules/node-pty native/${{ matrix.platform }}/
+          cd native
+          tar -czf ../node-pty-${{ matrix.platform }}.tar.gz ${{ matrix.platform }}
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform }}
-          path: dist/${{ matrix.platform }}/
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts/
-
-      - name: Create release archives
+      - name: Upload to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cd artifacts
-          for platform in */; do
-            platform_name="${platform%/}"
-            tar -czf "../obsidian-claude-code-${platform_name}.tar.gz" -C "$platform_name" .
-          done
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: obsidian-claude-code-*.tar.gz
-          generate_release_notes: true
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release upload "$tag" node-pty-${{ matrix.platform }}.tar.gz --clobber
