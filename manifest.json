@@ -1,0 +1,9 @@
+{
+  "id": "obsidian-claude-code",
+  "name": "Claude Code Terminal",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Embed Claude Code terminal in Obsidian's sidebar",
+  "author": "sungjin",
+  "isDesktopOnly": true
+}

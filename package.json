@@ -1,0 +1,32 @@
+{
+  "name": "obsidian-claude-code",
+  "version": "0.1.0",
+  "description": "Embed Claude Code terminal in Obsidian's sidebar",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production",
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "keywords": [
+    "obsidian",
+    "claude",
+    "terminal",
+    "ai"
+  ],
+  "author": "sungjin",
+  "license": "MIT",
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "@types/node": "^20.11.0",
+    "esbuild": "^0.21.0",
+    "obsidian": "latest",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.0.0"
+  }
+}

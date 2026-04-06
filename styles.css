@@ -1,0 +1,25 @@
+.claude-terminal-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+
+.claude-terminal-wrapper {
+  flex: 1;
+  overflow: hidden;
+  padding: 4px;
+}
+
+.claude-terminal-wrapper .xterm {
+  height: 100%;
+}
+
+.claude-terminal-wrapper .xterm-viewport {
+  overflow-y: auto;
+}
+
+.claude-terminal-wrapper .xterm-screen {
+  height: 100%;
+}
