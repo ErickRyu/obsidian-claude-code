@@ -2,10 +2,30 @@ import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { VIEW_TYPE_CLAUDE_TERMINAL, RESIZE_DEBOUNCE_MS } from "./constants";
+import {
+  VIEW_TYPE_CLAUDE_TERMINAL,
+  RESIZE_DEBOUNCE_MS,
+  TerminalState,
+} from "./constants";
 import { TerminalManager } from "./terminal-manager";
 import { buildXtermTheme } from "./theme-sync";
 import type { ClaudeTerminalSettings } from "./settings";
+
+export function sanitizeForPty(text: string): string {
+  return text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+}
+
+export function wrapBackticks(text: string): string {
+  if (text.includes("```")) {
+    return "````\n" + text + "\n````";
+  }
+  return text;
+}
+
+interface ReadyPromiseCallbacks {
+  resolve: () => void;
+  reject: (reason: Error) => void;
+}
 
 export class ClaudeTerminalView extends ItemView {
   private terminal: Terminal | null = null;
@@ -14,6 +34,8 @@ export class ClaudeTerminalView extends ItemView {
   private resizeObserver: ResizeObserver | null = null;
   private resizeTimeout: ReturnType<typeof setTimeout> | null = null;
   private wrapperEl: HTMLElement | null = null;
+  private state: TerminalState = TerminalState.Closed;
+  private readyCallbacks: ReadyPromiseCallbacks[] = [];
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -36,7 +58,45 @@ export class ClaudeTerminalView extends ItemView {
     return "terminal";
   }
 
+  getTerminalState(): TerminalState {
+    return this.state;
+  }
+
+  async ensureReady(): Promise<void> {
+    if (this.state === TerminalState.Ready) {
+      return;
+    }
+    if (this.state === TerminalState.Exited) {
+      this.spawnClaude();
+    }
+    // Queue a resolver for Opening and Closed states
+    if (
+      this.state === TerminalState.Opening ||
+      this.state === TerminalState.Closed
+    ) {
+      return new Promise<void>((resolve, reject) => {
+        this.readyCallbacks.push({ resolve, reject });
+      });
+    }
+  }
+
+  sendText(text: string): void {
+    if (this.state !== TerminalState.Ready) {
+      return;
+    }
+    const sanitized = sanitizeForPty(text);
+    if (this.terminalManager?.isRunning) {
+      this.terminalManager.write(sanitized);
+    }
+  }
+
+  focusTerminal(): void {
+    this.terminal?.focus();
+  }
+
   async onOpen(): Promise<void> {
+    this.state = TerminalState.Opening;
+
     const container = this.containerEl.children[1] as HTMLElement;
     container.empty();
     container.addClass("claude-terminal-container");
@@ -63,13 +123,11 @@ export class ClaudeTerminalView extends ItemView {
 
     this.terminal.open(this.wrapperEl);
 
-    // Initial fit after DOM layout
     requestAnimationFrame(() => {
       this.fitAddon?.fit();
       this.spawnClaude();
     });
 
-    // Handle resize
     this.resizeObserver = new ResizeObserver(() => {
       if (this.resizeTimeout) {
         clearTimeout(this.resizeTimeout);
@@ -83,12 +141,10 @@ export class ClaudeTerminalView extends ItemView {
     });
     this.resizeObserver.observe(this.wrapperEl);
 
-    // Handle user input → PTY
     this.terminal.onData((data) => {
       this.terminalManager?.write(data);
     });
 
-    // Handle paste
     this.terminal.attachCustomKeyEventHandler((event) => {
       if (event.type === "keydown" && event.metaKey && event.key === "v") {
         navigator.clipboard.readText().then((text) => {
@@ -96,7 +152,6 @@ export class ClaudeTerminalView extends ItemView {
         });
         return false;
       }
-      // Cmd+C for copy when there's a selection
       if (
         event.type === "keydown" &&
         event.metaKey &&
@@ -110,7 +165,6 @@ export class ClaudeTerminalView extends ItemView {
       return true;
     });
 
-    // Listen for theme changes
     this.registerEvent(
       this.app.workspace.on("css-change", () => {
         if (this.terminal) {
@@ -121,6 +175,8 @@ export class ClaudeTerminalView extends ItemView {
   }
 
   private spawnClaude(): void {
+    this.state = TerminalState.Opening;
+
     const settings = this.getSettings();
     const vaultPath = this.getVaultPath();
     const cwd = settings.cwdOverride || vaultPath;
@@ -142,14 +198,18 @@ export class ClaudeTerminalView extends ItemView {
         this.terminal?.rows ?? 24,
         (data) => {
           this.terminal?.write(data);
+          if (this.state === TerminalState.Opening) {
+            this.state = TerminalState.Ready;
+            this.resolveAllCallbacks();
+          }
         },
         (exitCode) => {
+          this.state = TerminalState.Exited;
           this.terminal?.write(
             `\r\n\x1b[90m[Claude Code exited with code ${exitCode}. Press any key to restart]\x1b[0m\r\n`
           );
           this.terminalManager = null;
 
-          // Restart on any key
           const disposable = this.terminal?.onData(() => {
             disposable?.dispose();
             this.spawnClaude();
@@ -157,18 +217,34 @@ export class ClaudeTerminalView extends ItemView {
         }
       );
     } catch (error) {
-      const msg =
-        error instanceof Error ? error.message : "Unknown error";
+      this.state = TerminalState.Exited;
+      const msg = error instanceof Error ? error.message : "Unknown error";
       new Notice(
         `Failed to start Claude Code: ${msg}. Check that the Claude CLI is installed and the path is correct in settings.`
       );
       this.terminal?.write(
         `\r\n\x1b[31mError: ${msg}\x1b[0m\r\n\x1b[90mEnsure Claude CLI is installed: npm install -g @anthropic-ai/claude-code\x1b[0m\r\n`
       );
+      this.rejectAllCallbacks(
+        new Error(`Claude Code failed to start: ${msg}`)
+      );
     }
   }
 
+  private resolveAllCallbacks(): void {
+    const callbacks = [...this.readyCallbacks];
+    this.readyCallbacks = [];
+    callbacks.forEach((cb) => cb.resolve());
+  }
+
+  private rejectAllCallbacks(reason: Error): void {
+    const callbacks = [...this.readyCallbacks];
+    this.readyCallbacks = [];
+    callbacks.forEach((cb) => cb.reject(reason));
+  }
+
   async onClose(): Promise<void> {
+    this.state = TerminalState.Closed;
     if (this.resizeTimeout) {
       clearTimeout(this.resizeTimeout);
     }
@@ -180,11 +256,6 @@ export class ClaudeTerminalView extends ItemView {
     this.terminalManager = null;
     this.resizeObserver = null;
     this.wrapperEl = null;
-  }
-
-  updateTheme(): void {
-    if (this.terminal) {
-      this.terminal.options.theme = buildXtermTheme();
-    }
+    this.rejectAllCallbacks(new Error("Terminal view closed"));
   }
 }
