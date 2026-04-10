@@ -78,21 +78,84 @@ export class McpContextBridge {
     } catch {
       new Notice("Failed to write MCP config to .mcp.json");
     }
+
+    this.writeToolPermissions(resolvedCwd);
+  }
+
+  private writeToolPermissions(cwd: string): void {
+    const claudeDir = path.join(cwd, ".claude");
+    try {
+      if (!fs.existsSync(claudeDir)) {
+        fs.mkdirSync(claudeDir, { recursive: true });
+      }
+    } catch {
+      return;
+    }
+
+    const settingsPath = path.join(claudeDir, "settings.local.json");
+    let settings: Record<string, unknown> = {};
+
+    try {
+      if (fs.existsSync(settingsPath)) {
+        settings = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+      }
+    } catch {
+      // Invalid JSON — start fresh
+    }
+
+    const permissions = (settings.permissions ?? {}) as Record<string, unknown>;
+    const allowList = (permissions.allow ?? []) as string[];
+    const mcpPattern = `mcp__${MCP_SERVER_NAME}`;
+
+    if (!allowList.includes(mcpPattern)) {
+      allowList.push(mcpPattern);
+      permissions.allow = allowList;
+      settings.permissions = permissions;
+
+      try {
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+      } catch {
+        // Best effort
+      }
+    }
   }
 
   removeMcpConfig(cwd: string): void {
     const resolvedCwd = path.resolve(cwd);
+
+    // Remove MCP server entry from .mcp.json
     const mcpConfigPath = path.join(resolvedCwd, ".mcp.json");
     try {
-      if (!fs.existsSync(mcpConfigPath)) return;
-      const config = JSON.parse(fs.readFileSync(mcpConfigPath, "utf8")) as Record<string, unknown>;
-      const servers = config.mcpServers as Record<string, unknown> | undefined;
-      if (servers && MCP_SERVER_NAME in servers) {
-        delete servers[MCP_SERVER_NAME];
-        if (Object.keys(servers).length === 0) {
-          delete config.mcpServers;
+      if (fs.existsSync(mcpConfigPath)) {
+        const config = JSON.parse(fs.readFileSync(mcpConfigPath, "utf8")) as Record<string, unknown>;
+        const servers = config.mcpServers as Record<string, unknown> | undefined;
+        if (servers && MCP_SERVER_NAME in servers) {
+          delete servers[MCP_SERVER_NAME];
+          if (Object.keys(servers).length === 0) {
+            delete config.mcpServers;
+          }
+          fs.writeFileSync(mcpConfigPath, JSON.stringify(config, null, 2));
         }
-        fs.writeFileSync(mcpConfigPath, JSON.stringify(config, null, 2));
+      }
+    } catch {
+      // Best effort cleanup
+    }
+
+    // Remove tool permission from .claude/settings.local.json
+    const settingsPath = path.join(resolvedCwd, ".claude", "settings.local.json");
+    try {
+      if (fs.existsSync(settingsPath)) {
+        const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+        const permissions = settings.permissions as Record<string, unknown> | undefined;
+        const allowList = permissions?.allow as string[] | undefined;
+        if (allowList) {
+          const mcpPattern = `mcp__${MCP_SERVER_NAME}`;
+          const filtered = allowList.filter((p) => p !== mcpPattern);
+          if (filtered.length !== allowList.length) {
+            permissions!.allow = filtered;
+            fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+          }
+        }
       }
     } catch {
       // Best effort cleanup
