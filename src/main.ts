@@ -44,7 +44,8 @@ export default class ClaudeTerminalPlugin extends Plugin {
         leaf,
         () => this.settings,
         () => this.getVaultBasePath(),
-        () => this.getPluginDir()
+        () => this.getPluginDir(),
+        () => this.mcpBridge?.getPromptFilePath() ?? null
       );
     });
 

@@ -44,7 +44,8 @@ export class ClaudeTerminalView extends ItemView {
     leaf: WorkspaceLeaf,
     private readonly getSettings: () => ClaudeTerminalSettings,
     private readonly getVaultPath: () => string,
-    private readonly getPluginDir: () => string
+    private readonly getPluginDir: () => string,
+    private readonly getSystemPromptFile: () => string | null = () => null
   ) {
     super(leaf);
     this.icon = "claude-ai";
@@ -203,6 +204,11 @@ export class ClaudeTerminalView extends ItemView {
     const args: string[] = [];
     if (settings.extraArgs.trim()) {
       args.push(...settings.extraArgs.trim().split(/\s+/));
+    }
+
+    const promptFile = this.getSystemPromptFile();
+    if (promptFile) {
+      args.push("--append-system-prompt-file", promptFile);
     }
 
     this.terminalManager = new TerminalManager();

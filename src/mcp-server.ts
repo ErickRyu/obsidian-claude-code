@@ -1,7 +1,7 @@
 import { App, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import * as fs from "fs";
 import * as path from "path";
-import { MCP_CONTEXT_FILE, MCP_SERVER_SCRIPT, MCP_SERVER_NAME, CONTEXT_UPDATE_DEBOUNCE_MS } from "./constants";
+import { MCP_CONTEXT_FILE, MCP_SERVER_SCRIPT, MCP_SERVER_NAME, MCP_PROMPT_FILE, CONTEXT_UPDATE_DEBOUNCE_MS } from "./constants";
 
 interface ObsidianContext {
   vaultPath: string;
@@ -13,6 +13,7 @@ interface ObsidianContext {
 export class McpContextBridge {
   private readonly contextFilePath: string;
   private readonly serverScriptPath: string;
+  private readonly promptFilePath: string;
   private updateTimeout: ReturnType<typeof setTimeout> | null = null;
   private scriptReady = false;
 
@@ -23,6 +24,11 @@ export class McpContextBridge {
   ) {
     this.contextFilePath = path.join(pluginDir, MCP_CONTEXT_FILE);
     this.serverScriptPath = path.join(pluginDir, MCP_SERVER_SCRIPT);
+    this.promptFilePath = path.join(pluginDir, MCP_PROMPT_FILE);
+  }
+
+  getPromptFilePath(): string {
+    return this.promptFilePath;
   }
 
   /** Returns false if setup failed (script could not be written). */
@@ -122,6 +128,34 @@ export class McpContextBridge {
       fs.writeFileSync(this.contextFilePath, JSON.stringify(context, null, 2));
     } catch (err) {
       console.error("[obsidian-claude] Failed to write MCP context file:", err);
+    }
+
+    this.writeSystemPrompt(activeFile, openFiles);
+  }
+
+  private writeSystemPrompt(
+    activeFile: TFile | null,
+    openFiles: Array<{ path: string; basename: string }>
+  ): void {
+    const lines: string[] = [];
+
+    if (openFiles.length > 0) {
+      const paths = openFiles.map((f) => f.path).join(", ");
+      lines.push(`[Obsidian] Open notes: ${paths}`);
+    } else {
+      lines.push("[Obsidian] No notes currently open.");
+    }
+
+    if (activeFile) {
+      lines.push(`Active note: ${activeFile.path}`);
+    }
+
+    lines.push("(Use get_active_note or read_note MCP tools for note content)");
+
+    try {
+      fs.writeFileSync(this.promptFilePath, lines.join("\n") + "\n");
+    } catch {
+      // Best effort
     }
   }
 
