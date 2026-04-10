@@ -6,6 +6,8 @@ Embed Claude Code as an interactive terminal right in Obsidian's sidebar. Open i
 
 - **Sidebar terminal** — Claude Code runs in the right sidebar via xterm.js + node-pty
 - **Multi-tab support** — Open multiple Claude Code terminals simultaneously
+- **Automatic workspace context** — Claude Code automatically knows which notes are open and which one is active, without you having to tell it
+- **MCP context server** — Built-in MCP server exposes tools so Claude can read your open notes, search the vault, and fetch any note on demand
 - **Send selection** — Select text in a note, run a command, and it appears in Claude's input with file path and line numbers
 - **Send current file** — Send the active file's path to Claude with one command
 - **Focus toggle** — Switch between editor and terminal without touching the mouse
@@ -67,16 +69,25 @@ Set hotkeys in Settings > Hotkeys. Recommended: `Cmd+2` for toggle.
 - **Font family** — Terminal font (default: system monospace)
 - **Extra CLI arguments** — Additional args passed to Claude CLI (e.g., `--model sonnet`)
 - **Working directory** — Override the working directory (default: vault root)
+- **MCP context server** — Enable the built-in MCP server so Claude can access open notes, active file, and vault search (default: on). Requires terminal restart after toggling.
 
 ## How it works
 
 The plugin spawns Claude Code CLI in a pseudo-terminal (PTY) using node-pty, renders it with xterm.js in an Obsidian sidebar view. Editor integration commands inject text into the terminal input buffer (paste-only, no auto-submit). A terminal state machine (closed/opening/ready/exited) ensures commands wait for the PTY to be ready before sending text.
 
+### Workspace context
+
+On load, the plugin starts a lightweight MCP (Model Context Protocol) server that exposes Obsidian's workspace state to Claude Code. It does two things:
+
+1. **System prompt injection** — A short prompt file listing currently open notes and the active note is auto-generated and passed to Claude via `--append-system-prompt-file`. Claude always knows which notes you have open without you telling it.
+2. **MCP tools** — Claude can call `get_active_note`, `list_open_notes`, `read_note`, and `search_notes` on demand to fetch note content or search the vault.
+
+The plugin writes `.mcp.json` and `.claude/settings.local.json` in your vault on load so Claude Code auto-discovers the server and pre-approves the tools (no per-call permission prompts). These are cleaned up when the plugin is disabled.
+
 ## Limitations
 
 - **Desktop only** — requires node-pty (native module), does not work on mobile
 - **No inline diffs** — Obsidian API does not support inline diff views
-- **No automatic context** — unlike VS Code, context sharing is command-based, not automatic
 - **Native module build** — node-pty must be compiled for your Obsidian's Electron version
 
 ## License
