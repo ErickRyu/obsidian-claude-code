@@ -12,6 +12,7 @@ export interface ClaudeTerminalSettings {
   fontFamily: string;
   extraArgs: string;
   cwdOverride: string;
+  enableMcp: boolean;
 }
 
 export const DEFAULT_SETTINGS: ClaudeTerminalSettings = {
@@ -20,6 +21,7 @@ export const DEFAULT_SETTINGS: ClaudeTerminalSettings = {
   fontFamily: DEFAULT_FONT_FAMILY,
   extraArgs: "",
   cwdOverride: "",
+  enableMcp: true,
 };
 
 export class ClaudeTerminalSettingTab extends PluginSettingTab {
@@ -109,6 +111,23 @@ export class ClaudeTerminalSettingTab extends PluginSettingTab {
             this.plugin.settings = {
               ...this.plugin.settings,
               cwdOverride: value,
+            };
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("MCP context server")
+      .setDesc(
+        "Enable MCP server so Claude can access open notes, active file, and vault search. Requires terminal restart."
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enableMcp)
+          .onChange(async (value) => {
+            this.plugin.settings = {
+              ...this.plugin.settings,
+              enableMcp: value,
             };
             await this.plugin.saveSettings();
           })

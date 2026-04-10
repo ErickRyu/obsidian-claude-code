@@ -15,11 +15,13 @@ import {
   DEFAULT_SETTINGS,
 } from "./settings";
 import { ensureNodePty } from "./native-bootstrap";
+import { McpContextBridge } from "./mcp-server";
 
 export default class ClaudeTerminalPlugin extends Plugin {
   settings: ClaudeTerminalSettings = DEFAULT_SETTINGS;
   private lastNonTerminalLeaf: WorkspaceLeaf | null = null;
   private lastActiveTerminalLeaf: WorkspaceLeaf | null = null;
+  private mcpBridge: McpContextBridge | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -55,8 +57,12 @@ export default class ClaudeTerminalPlugin extends Plugin {
         } else {
           this.lastNonTerminalLeaf = leaf;
         }
+        this.mcpBridge?.scheduleContextUpdate();
       })
     );
+
+    // MCP context bridge — lets Claude access open notes
+    this.setupMcp();
 
     this.addCommand({
       id: COMMAND_TOGGLE_TERMINAL,
@@ -173,6 +179,7 @@ export default class ClaudeTerminalPlugin extends Plugin {
 
   async onunload(): Promise<void> {
     // Don't detach leaves — Obsidian will reinitialize them on plugin update
+    this.teardownMcp();
   }
 
   private async toggleView(): Promise<void> {
@@ -225,6 +232,46 @@ export default class ClaudeTerminalPlugin extends Plugin {
     });
     this.app.workspace.revealLeaf(leaf);
     return leaf.view as ClaudeTerminalView;
+  }
+
+  private setupMcp(): void {
+    if (!this.settings.enableMcp) return;
+
+    const vaultPath = this.getVaultBasePath();
+    if (!vaultPath) return;
+
+    const pluginDir = this.getPluginDir();
+    this.mcpBridge = new McpContextBridge(this.app, pluginDir, vaultPath);
+
+    if (!this.mcpBridge.setup()) {
+      this.mcpBridge = null;
+      return;
+    }
+
+    const cwd = this.settings.cwdOverride || vaultPath;
+    this.mcpBridge.writeMcpConfig(cwd);
+
+    // Also update context when files are opened/closed
+    this.registerEvent(
+      this.app.workspace.on("file-open", () => {
+        this.mcpBridge?.scheduleContextUpdate();
+      })
+    );
+    this.registerEvent(
+      this.app.workspace.on("layout-change", () => {
+        this.mcpBridge?.scheduleContextUpdate();
+      })
+    );
+  }
+
+  private teardownMcp(): void {
+    if (!this.mcpBridge) return;
+
+    const vaultPath = this.getVaultBasePath();
+    const cwd = this.settings.cwdOverride || vaultPath;
+    this.mcpBridge.removeMcpConfig(cwd);
+    this.mcpBridge.dispose();
+    this.mcpBridge = null;
   }
 
   private getVaultBasePath(): string {

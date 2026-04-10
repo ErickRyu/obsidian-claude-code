@@ -10,6 +10,11 @@ export const DEFAULT_FONT_FAMILY =
   "Menlo, Monaco, 'Courier New', monospace";
 export const RESIZE_DEBOUNCE_MS = 100;
 
+export const MCP_CONTEXT_FILE = "obsidian-context.json";
+export const MCP_SERVER_SCRIPT = "obsidian-mcp-server.cjs";
+export const MCP_SERVER_NAME = "obsidian-context";
+export const CONTEXT_UPDATE_DEBOUNCE_MS = 300;
+
 export enum TerminalState {
   Closed = "closed",
   Opening = "opening",
