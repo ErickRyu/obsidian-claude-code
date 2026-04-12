@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf, App } from "obsidian";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -10,6 +10,7 @@ import {
 import { TerminalManager } from "./terminal-manager";
 import { buildXtermTheme } from "./theme-sync";
 import type { ClaudeTerminalSettings } from "./settings";
+import { FileSuggestModal } from "./file-suggest-modal";
 
 export function sanitizeForPty(text: string): string {
   return text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
@@ -152,6 +153,29 @@ export class ClaudeTerminalView extends ItemView {
     });
 
     this.terminal.attachCustomKeyEventHandler((event) => {
+      // @-mention file picker: intercept @ key to open vault file search
+      if (
+        event.type === "keydown" &&
+        event.key === "@" &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.isComposing
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        const tm = this.terminalManager;
+        new FileSuggestModal(
+          this.app,
+          (selectedPath: string) => {
+            tm?.write("@" + selectedPath + " ");
+          },
+          () => {
+            // User dismissed modal without selecting — write literal @
+            tm?.write("@");
+          }
+        ).open();
+        return false;
+      }
       // Send kitty keyboard protocol sequence for Shift+Enter
       // so Claude Code CLI recognizes it as multiline input.
       // Use keyCode fallback for IME composition states where event.key may differ.

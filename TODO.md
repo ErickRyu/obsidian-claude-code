@@ -16,7 +16,7 @@ build it, and rough effort.
 These don't require replacing the terminal renderer. They intercept keystrokes in
 xterm.js and layer Obsidian-native UI on top (SuggestModal, StatusBar, etc.).
 
-### [ ] @-mention file picker
+### [x] @-mention file picker
 
 **What:** User types `@` in the terminal input and a fuzzy file search popup appears
 listing vault notes. Selecting a note inserts `@path/to/note.md` into the prompt.
