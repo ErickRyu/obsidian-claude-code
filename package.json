@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "node esbuild.config.mjs production",
-    "postinstall": "node scripts/postinstall.js"
+    "postinstall": "node scripts/postinstall.js",
+    "test": "vitest run"
   },
   "keywords": [
     "obsidian",
@@ -21,7 +22,8 @@
     "@types/node": "^20.11.0",
     "esbuild": "^0.21.0",
     "obsidian": "latest",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.4"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
