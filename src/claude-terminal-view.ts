@@ -164,9 +164,16 @@ export class ClaudeTerminalView extends ItemView {
         event.preventDefault();
         event.stopPropagation();
         const tm = this.terminalManager;
-        new FileSuggestModal(this.app, (selectedPath: string) => {
-          tm?.write("@" + selectedPath + " ");
-        }).open();
+        new FileSuggestModal(
+          this.app,
+          (selectedPath: string) => {
+            tm?.write("@" + selectedPath + " ");
+          },
+          () => {
+            // User dismissed modal without selecting — write literal @
+            tm?.write("@");
+          }
+        ).open();
         return false;
       }
       // Send kitty keyboard protocol sequence for Shift+Enter

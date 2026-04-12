@@ -26,10 +26,12 @@ export class FileSuggestModal extends SuggestModal<SuggestionItem> {
   private readonly allFiles: readonly TFile[];
   private previewEl: HTMLElement | null = null;
   private previewDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private didSelect = false;
 
   constructor(
     app: App,
-    private readonly onSelect: (path: string) => void
+    private readonly onSelect: (path: string) => void,
+    private readonly onDismiss: () => void = () => {}
   ) {
     super(app);
     this.allFiles = this.app.vault.getFiles();
@@ -37,6 +39,7 @@ export class FileSuggestModal extends SuggestModal<SuggestionItem> {
     this.setInstructions([
       { command: "#", purpose: "heading reference" },
       { command: "/", purpose: "filter by folder" },
+      { command: "Esc", purpose: "type @ literally" },
     ]);
 
     this.modalEl.addClass("file-suggest-with-preview");
@@ -49,6 +52,9 @@ export class FileSuggestModal extends SuggestModal<SuggestionItem> {
     if (this.previewDebounceTimer) {
       clearTimeout(this.previewDebounceTimer);
       this.previewDebounceTimer = null;
+    }
+    if (!this.didSelect) {
+      this.onDismiss();
     }
   }
 
@@ -105,6 +111,7 @@ export class FileSuggestModal extends SuggestModal<SuggestionItem> {
   }
 
   onChooseSuggestion(item: SuggestionItem): void {
+    this.didSelect = true;
     if (item.type === "heading") {
       this.onSelect(`${item.file.path}#${item.heading}`);
     } else {
@@ -190,11 +197,16 @@ export class FileSuggestModal extends SuggestModal<SuggestionItem> {
     const file = item.file;
     const ext = file.extension.toLowerCase();
     const binaryExts = [
-      "png", "jpg", "jpeg", "gif", "svg", "webp",
-      "pdf", "mp3", "mp4", "wav", "zip", "tar", "gz",
+      "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico",
+      "pdf", "mp3", "mp4", "wav", "mov", "avi",
+      "zip", "tar", "gz", "7z", "rar",
+      "woff", "woff2", "ttf", "otf",
+      "docx", "xlsx", "pptx",
     ];
 
-    if (binaryExts.includes(ext)) {
+    const MAX_PREVIEW_SIZE = 1024 * 1024; // 1MB
+
+    if (binaryExts.includes(ext) || file.stat.size > MAX_PREVIEW_SIZE) {
       this.previewEl.empty();
       this.previewEl.createEl("div", {
         text: `${file.basename}.${ext} (${Math.round(file.stat.size / 1024)}KB)`,
@@ -203,13 +215,22 @@ export class FileSuggestModal extends SuggestModal<SuggestionItem> {
       return;
     }
 
-    const content = await this.app.vault.cachedRead(file);
+    try {
+      const content = await this.app.vault.cachedRead(file);
 
-    // Guard: modal may have closed during await
-    if (!this.previewEl?.isConnected) return;
+      // Guard: modal may have closed during await
+      if (!this.previewEl?.isConnected) return;
 
-    const lines = content.split("\n").slice(0, 20).join("\n");
-    this.previewEl.empty();
-    this.previewEl.createEl("pre", { text: lines });
+      const lines = content.split("\n").slice(0, 20).join("\n");
+      this.previewEl.empty();
+      this.previewEl.createEl("pre", { text: lines });
+    } catch {
+      if (!this.previewEl?.isConnected) return;
+      this.previewEl.empty();
+      this.previewEl.createEl("div", {
+        text: "Preview unavailable",
+        cls: "file-suggest-binary-info",
+      });
+    }
   }
 }
