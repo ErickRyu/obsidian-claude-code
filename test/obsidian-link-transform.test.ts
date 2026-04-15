@@ -142,4 +142,103 @@ describe("ObsidianLinkTransform", () => {
       expect(t.transform(`o](${url}) tail`)).toBe(`${osc8(url, "foo")} tail`);
     });
   });
+
+  // Fallback for when Claude ignores the system prompt and emits a raw
+  // obsidian:// URL without the markdown `[text](url)` wrapper. We detect
+  // the bare URL, extract the basename from the `path` query param, and
+  // wrap it in OSC 8 so the user sees a short clickable label instead of
+  // a giant URL.
+  describe("bare obsidian:// URL handling", () => {
+    it("wraps a bare obsidian:// URL using basename from path", () => {
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v&path=foo.md";
+      const out = t.transform(`see ${url} here`);
+      expect(out).toBe(`see ${osc8(url, "foo.md")} here`);
+    });
+
+    it("extracts basename from a nested path", () => {
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v&path=dir%2Fsub%2Ffile.md";
+      const out = t.transform(`see ${url}`);
+      expect(out).toBe(`see ${osc8(url, "file.md")}`);
+    });
+
+    it("decodes korean-encoded basename", () => {
+      const t = new ObsidianLinkTransform();
+      const url =
+        "obsidian://open?vault=v&path=Journal%2F2026-04-15%20%EC%88%98.md";
+      expect(t.transform(url)).toBe(osc8(url, "2026-04-15 수.md"));
+    });
+
+    it("wraps multiple bare URLs in one chunk", () => {
+      const t = new ObsidianLinkTransform();
+      const u1 = "obsidian://open?vault=v&path=a.md";
+      const u2 = "obsidian://open?vault=v&path=b.md";
+      expect(t.transform(`${u1} and ${u2}`)).toBe(
+        `${osc8(u1, "a.md")} and ${osc8(u2, "b.md")}`
+      );
+    });
+
+    it("does NOT re-wrap a URL already inside an OSC 8 hyperlink", () => {
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v&path=a.md";
+      const input = osc8(url, "foo");
+      expect(t.transform(input)).toBe(input);
+    });
+
+    it("markdown wrapping precedes bare scan without double-wrap", () => {
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v&path=a.md";
+      const out = t.transform(`[foo](${url}) and raw ${url}`);
+      expect(out).toBe(
+        `${osc8(url, "foo")} and raw ${osc8(url, "a.md")}`
+      );
+    });
+
+    it("stops a bare URL at whitespace", () => {
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v&path=a.md";
+      expect(t.transform(`${url} rest`)).toBe(`${osc8(url, "a.md")} rest`);
+    });
+
+    it("stops a bare URL at a newline", () => {
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v&path=a.md";
+      expect(t.transform(`${url}\nrest`)).toBe(`${osc8(url, "a.md")}\nrest`);
+    });
+
+    it("stops a bare URL at a closing paren", () => {
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v&path=a.md";
+      expect(t.transform(`(${url}) rest`)).toBe(`(${osc8(url, "a.md")}) rest`);
+    });
+
+    it("buffers a bare URL split across chunks (mid-URL)", () => {
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v&path=a.md";
+      expect(t.transform("prefix obsidian://open?vault=v&path=")).toBe("prefix ");
+      expect(t.transform("a.md tail")).toBe(`${osc8(url, "a.md")} tail`);
+    });
+
+    it("buffers a bare URL split inside the scheme", () => {
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v&path=a.md";
+      expect(t.transform("prefix obsidi")).toBe("prefix ");
+      expect(t.transform("an://open?vault=v&path=a.md tail")).toBe(
+        `${osc8(url, "a.md")} tail`
+      );
+    });
+
+    it("does NOT buffer a plain word starting with 'o'", () => {
+      const t = new ObsidianLinkTransform();
+      expect(t.transform("hello open source")).toBe("hello open source");
+      expect(t.flush()).toBe("");
+    });
+
+    it("falls back to the full URL as label when path is missing", () => {
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v";
+      expect(t.transform(url)).toBe(osc8(url, url));
+    });
+  });
 });

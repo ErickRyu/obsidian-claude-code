@@ -20,6 +20,20 @@ const ST = "\x1b\\";
 // swallow terminal output from the CSI all the way to the real link.
 const COMPLETE_LINK_RE = /(?<!\x1b)\[([^\]\n\x1b]+)\]\((obsidian:\/\/open\?[^)\s]*)\)/g;
 
+// Matches a bare obsidian://open?... URL that Claude emitted without the
+// markdown `[text](url)` wrapper. Terminates at whitespace, closing
+// paren/bracket, quote, or angle. Negative lookbehind `(?<!\x1b\]8;;)`
+// prevents matching a URL that is already embedded inside an OSC 8 hyperlink
+// from the markdown pass (or from upstream output).
+const BARE_URL_RE =
+  /(?<!\x1b\]8;;)(obsidian:\/\/open\?[^\s)\]"'<>\x1b]+)/g;
+
+// Shortest `obsidian://open?` prefix we treat as "possibly starting a bare
+// URL" at a chunk tail. Below 5 chars (`obsid`) buffering triggers on far
+// too many plain words beginning with `o`, `ob`, `obs`, `obsi`.
+const BARE_URL_PREFIX = "obsidian://open?";
+const MIN_BARE_PREFIX = 5;
+
 // Maximum chars held across chunks while waiting for a link to close.
 // Beyond this we flush and give up — prevents unbounded growth on noisy input.
 const MAX_BUFFER = 4096;
@@ -35,7 +49,14 @@ export class ObsidianLinkTransform {
     const combined = this.buffer + chunk;
     this.buffer = "";
 
-    const splitAt = this.findPartialLinkStart(combined);
+    // Hold the earlier of the two partial starts so both markdown and bare
+    // URL tails have a chance to complete on the next chunk.
+    const markdownSplit = this.findPartialLinkStart(combined);
+    const bareSplit = this.findPartialBareUrlStart(combined);
+    const candidates = [markdownSplit, bareSplit].filter(
+      (v): v is number => v !== null
+    );
+    const splitAt = candidates.length > 0 ? Math.min(...candidates) : null;
 
     let processable: string;
     if (splitAt !== null && combined.length - splitAt <= MAX_BUFFER) {
@@ -45,9 +66,16 @@ export class ObsidianLinkTransform {
       processable = combined;
     }
 
-    return processable.replace(
+    // Markdown pass must precede the bare pass so the URLs wrapped by it are
+    // already protected by `\x1b]8;;` and the bare pass's lookbehind skips
+    // them.
+    const afterMarkdown = processable.replace(
       COMPLETE_LINK_RE,
       (_, text: string, url: string) => `${OSC}8;;${url}${ST}${text}${OSC}8;;${ST}`
+    );
+    return afterMarkdown.replace(
+      BARE_URL_RE,
+      (_, url: string) => `${OSC}8;;${url}${ST}${basenameFromUrl(url)}${OSC}8;;${ST}`
     );
   }
 
@@ -140,4 +168,85 @@ export class ObsidianLinkTransform {
 
     return tailStart + lastOpen;
   }
+
+  /**
+   * Walk backwards to the last word boundary and report the index of an
+   * unterminated bare `obsidian://open?...` URL if one is growing at the tail.
+   * Returns the index of the URL's first char, or null if nothing to hold.
+   *
+   * Two shapes qualify:
+   *   1. Tail is a proper prefix of `obsidian://open?` of length ≥ 5
+   *      (e.g. `obsid`, `obsidian:/`). Could still grow into a full URL.
+   *   2. Tail starts with the full `obsidian://open?` and has no terminator
+   *      (space, newline, paren, bracket, quote, angle, ESC) after it yet.
+   *
+   * We skip positions that are embedded in an already-emitted OSC 8 prefix
+   * (`\x1b]8;;obsidian://...`) so we don't re-buffer the URL inside an
+   * existing hyperlink.
+   */
+  private findPartialBareUrlStart(s: string): number | null {
+    // Find the boundary before the trailing candidate. Anything after the
+    // last whitespace / bracket / paren / quote counts as the candidate.
+    let start = s.length;
+    for (let i = s.length - 1; i >= 0; i--) {
+      const ch = s[i];
+      if (
+        ch === " " || ch === "\t" || ch === "\n" || ch === "\r" ||
+        ch === "(" || ch === "[" || ch === "<" || ch === ">" ||
+        ch === '"' || ch === "'" || ch === "\x1b"
+      ) {
+        start = i + 1;
+        break;
+      }
+      if (i === 0) start = 0;
+    }
+
+    if (start >= s.length) return null;
+    // Inside an OSC 8 hyperlink the URL is preceded by `\x1b]8;;`. Skip.
+    if (start >= 5 && s.slice(start - 5, start) === "\x1b]8;;") return null;
+
+    const tail = s.slice(start);
+
+    // Case 1: proper prefix of the full scheme+path intro.
+    if (
+      tail.length >= MIN_BARE_PREFIX &&
+      tail.length < BARE_URL_PREFIX.length &&
+      BARE_URL_PREFIX.startsWith(tail)
+    ) {
+      return start;
+    }
+
+    // Case 2: full prefix reached. Only buffer when the tail looks
+    // mid-structure (empty after prefix, or ends with a query-structural
+    // char like `=`, `&`, `?`, `/`, or a half-written `%XX` escape). If
+    // the URL appears to end naturally at end-of-chunk (e.g. with `.md`),
+    // wrap it now — otherwise a URL right before a newline would flicker.
+    if (tail.startsWith(BARE_URL_PREFIX)) {
+      const rest = tail.slice(BARE_URL_PREFIX.length);
+      if (/[\s)\]"'<>\x1b]/.test(rest)) return null;
+      if (rest.length === 0) return start;
+      if (/(?:[=&?/]|%[0-9a-fA-F]?)$/.test(rest)) return start;
+    }
+
+    return null;
+  }
+}
+
+/**
+ * Extract a short display label from an obsidian://open URL by percent-decoding
+ * the `path` query parameter and taking its final path segment. When `path` is
+ * absent or malformed we fall back to the whole URL so the user still sees
+ * something clickable.
+ */
+function basenameFromUrl(url: string): string {
+  const match = url.match(/[?&]path=([^&]+)/);
+  if (!match) return url;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(match[1]);
+  } catch {
+    decoded = match[1];
+  }
+  const slash = decoded.lastIndexOf("/");
+  return slash >= 0 ? decoded.slice(slash + 1) : decoded;
 }
