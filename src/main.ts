@@ -16,12 +16,14 @@ import {
 } from "./settings";
 import { ensureNodePty } from "./native-bootstrap";
 import { McpContextBridge } from "./mcp-server";
+import { SystemPromptWriter } from "./system-prompt-writer";
 
 export default class ClaudeTerminalPlugin extends Plugin {
   settings: ClaudeTerminalSettings = DEFAULT_SETTINGS;
   private lastNonTerminalLeaf: WorkspaceLeaf | null = null;
   private lastActiveTerminalLeaf: WorkspaceLeaf | null = null;
   private mcpBridge: McpContextBridge | null = null;
+  private promptWriter: SystemPromptWriter | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -39,13 +41,22 @@ export default class ClaudeTerminalPlugin extends Plugin {
       // Logged via Notice inside ensureNodePty
     });
 
+    // Prompt file must exist before any terminal view spawns claude CLI,
+    // including views Obsidian restores from a prior session. Create the
+    // writer and write its baseline BEFORE registerView.
+    this.promptWriter = new SystemPromptWriter(
+      pluginDir,
+      () => this.app.vault.getName()
+    );
+    this.promptWriter.writeBase();
+
     this.registerView(VIEW_TYPE_CLAUDE_TERMINAL, (leaf) => {
       return new ClaudeTerminalView(
         leaf,
         () => this.settings,
         () => this.getVaultBasePath(),
         () => this.getPluginDir(),
-        () => this.mcpBridge?.getPromptFilePath() ?? null
+        () => this.promptWriter?.getPromptFilePath() ?? null
       );
     });
 
@@ -181,6 +192,8 @@ export default class ClaudeTerminalPlugin extends Plugin {
   async onunload(): Promise<void> {
     // Don't detach leaves — Obsidian will reinitialize them on plugin update
     this.teardownMcp();
+    this.promptWriter?.dispose();
+    this.promptWriter = null;
   }
 
   private async toggleView(): Promise<void> {
@@ -240,9 +253,15 @@ export default class ClaudeTerminalPlugin extends Plugin {
 
     const vaultPath = this.getVaultBasePath();
     if (!vaultPath) return;
+    if (!this.promptWriter) return;
 
     const pluginDir = this.getPluginDir();
-    this.mcpBridge = new McpContextBridge(this.app, pluginDir, vaultPath);
+    this.mcpBridge = new McpContextBridge(
+      this.app,
+      pluginDir,
+      vaultPath,
+      this.promptWriter
+    );
 
     if (!this.mcpBridge.setup()) {
       this.mcpBridge = null;
@@ -273,6 +292,9 @@ export default class ClaudeTerminalPlugin extends Plugin {
     this.mcpBridge.removeMcpConfig(cwd);
     this.mcpBridge.dispose();
     this.mcpBridge = null;
+    // Plugin orchestrates writer lifecycle — restore baseline after bridge teardown
+    // so the prompt file still carries the URL instruction for Cmd+Click.
+    this.promptWriter?.writeBase();
   }
 
   private getVaultBasePath(): string {
