@@ -1,7 +1,8 @@
 import { App, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import * as fs from "fs";
 import * as path from "path";
-import { MCP_CONTEXT_FILE, MCP_SERVER_SCRIPT, MCP_SERVER_NAME, MCP_PROMPT_FILE, CONTEXT_UPDATE_DEBOUNCE_MS } from "./constants";
+import { MCP_CONTEXT_FILE, MCP_SERVER_SCRIPT, MCP_SERVER_NAME, CONTEXT_UPDATE_DEBOUNCE_MS } from "./constants";
+import { SystemPromptWriter } from "./system-prompt-writer";
 
 interface ObsidianContext {
   vaultPath: string;
@@ -13,22 +14,17 @@ interface ObsidianContext {
 export class McpContextBridge {
   private readonly contextFilePath: string;
   private readonly serverScriptPath: string;
-  private readonly promptFilePath: string;
   private updateTimeout: ReturnType<typeof setTimeout> | null = null;
   private scriptReady = false;
 
   constructor(
     private readonly app: App,
-    private readonly pluginDir: string,
-    private readonly vaultPath: string
+    pluginDir: string,
+    private readonly vaultPath: string,
+    private readonly promptWriter: SystemPromptWriter
   ) {
     this.contextFilePath = path.join(pluginDir, MCP_CONTEXT_FILE);
     this.serverScriptPath = path.join(pluginDir, MCP_SERVER_SCRIPT);
-    this.promptFilePath = path.join(pluginDir, MCP_PROMPT_FILE);
-  }
-
-  getPromptFilePath(): string {
-    return this.promptFilePath;
   }
 
   /** Returns false if setup failed (script could not be written). */
@@ -172,6 +168,9 @@ export class McpContextBridge {
     } catch {
       // File may not exist
     }
+    // Prompt file ownership belongs to the plugin's SystemPromptWriter.
+    // The plugin calls promptWriter.writeBase() after this to restore baseline,
+    // or promptWriter.dispose() on full plugin unload.
   }
 
   private updateContext(): void {
@@ -200,36 +199,24 @@ export class McpContextBridge {
     activeFile: TFile | null,
     openFiles: Array<{ path: string; basename: string }>
   ): void {
-    const lines: string[] = [];
+    const contextLines: string[] = [];
 
     if (openFiles.length > 0) {
       const paths = openFiles.map((f) => f.path).join(", ");
-      lines.push(`[Obsidian] Open notes: ${paths}`);
+      contextLines.push(`[Obsidian] Open notes: ${paths}`);
     } else {
-      lines.push("[Obsidian] No notes currently open.");
+      contextLines.push("[Obsidian] No notes currently open.");
     }
 
     if (activeFile) {
-      lines.push(`Active note: ${activeFile.path}`);
+      contextLines.push(`Active note: ${activeFile.path}`);
     }
 
-    lines.push("(Use get_active_note or read_note MCP tools for note content)");
+    contextLines.push("(Use get_active_note or read_note MCP tools for note content)");
 
-    const encodedVault = encodeURIComponent(this.app.vault.getName());
-    lines.push(
-      "",
-      "When you reference a vault note in your reply, format it as an Obsidian URL so the user can Cmd/Ctrl+click it:",
-      `  [<basename>](obsidian://open?vault=${encodedVault}&path=<url-encoded-vault-relative-path-with-extension>)`,
-      `Example: [llm-strategic-bias](obsidian://open?vault=${encodedVault}&path=personal-wiki%2Fconcepts%2Fllm-strategic-bias.md)`,
-      "Use this format only for files that exist in the user's vault. Always include the file extension.",
-      "CRITICAL: percent-encode the entire path. Spaces must become %20, Korean and other non-ASCII chars must be encodeURIComponent'd. A literal space in the URL breaks click handling when the line wraps in the sidebar."
-    );
-
-    try {
-      fs.writeFileSync(this.promptFilePath, lines.join("\n") + "\n");
-    } catch {
-      // Best effort
-    }
+    // URL instruction is appended by the writer. Keeps vault-name encoding
+    // in one place and ensures the instruction ships even when MCP is off.
+    this.promptWriter.writeWithContext(contextLines);
   }
 
   private getOpenFiles(): Array<{ path: string; basename: string }> {
