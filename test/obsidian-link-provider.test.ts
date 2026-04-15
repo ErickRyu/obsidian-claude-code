@@ -3,7 +3,9 @@ import { App, type TFile } from "obsidian";
 import {
   OBSIDIAN_OPEN_URL_REGEX,
   createObsidianLinkHandler,
+  createObsidianOsc8LinkHandler,
 } from "../src/obsidian-link-provider";
+import type { IBufferRange } from "@xterm/xterm";
 
 function makeApp(file: TFile | null = null): App {
   return {
@@ -127,5 +129,55 @@ describe("createObsidianLinkHandler", () => {
     handler = createObsidianLinkHandler(app);
     handler(clickEvent({ meta: true }), "obsidian://open?path=personal-wiki%2Ffoo.md");
     expect(app.workspace.openLinkText).toHaveBeenCalledWith("Personal-Wiki/Foo.md", "", false);
+  });
+});
+
+describe("createObsidianOsc8LinkHandler", () => {
+  const range: IBufferRange = {
+    start: { x: 1, y: 1 },
+    end: { x: 1, y: 1 },
+  };
+
+  it("opens the resolved note for obsidian:// OSC 8 hyperlinks with modifier", () => {
+    const file = makeFile("notes/foo.md");
+    const app = makeApp(file);
+    const handler = createObsidianOsc8LinkHandler(app);
+    handler.activate(
+      clickEvent({ meta: true }),
+      "obsidian://open?path=notes%2Ffoo.md",
+      range
+    );
+    expect(app.workspace.openLinkText).toHaveBeenCalledWith("notes/foo.md", "", false);
+  });
+
+  it("ignores obsidian:// clicks without a modifier key", () => {
+    const app = makeApp(makeFile("notes/foo.md"));
+    const handler = createObsidianOsc8LinkHandler(app);
+    handler.activate(clickEvent({}), "obsidian://open?path=notes%2Ffoo.md", range);
+    expect(app.workspace.openLinkText).not.toHaveBeenCalled();
+  });
+
+  it("opens non-obsidian URLs via window.open", () => {
+    const app = makeApp(null);
+    const handler = createObsidianOsc8LinkHandler(app);
+    const openSpy = vi.fn();
+    (globalThis as { window?: { open: typeof openSpy } }).window = { open: openSpy };
+    try {
+      handler.activate(clickEvent({}), "https://example.com", range);
+      expect(openSpy).toHaveBeenCalledWith("https://example.com", "_blank");
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
+
+  it("rejects obsidian:// non-open hosts", () => {
+    const app = makeApp(makeFile("x.md"));
+    const handler = createObsidianOsc8LinkHandler(app);
+    handler.activate(
+      clickEvent({ meta: true }),
+      "obsidian://shell-command?cmd=evil",
+      range
+    );
+    expect(app.workspace.openLinkText).not.toHaveBeenCalled();
   });
 });

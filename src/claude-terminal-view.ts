@@ -11,8 +11,9 @@ import { TerminalManager } from "./terminal-manager";
 import { buildXtermTheme } from "./theme-sync";
 import type { ClaudeTerminalSettings } from "./settings";
 import { FileSuggestModal } from "./file-suggest-modal";
-import { OBSIDIAN_OPEN_URL_REGEX, createObsidianLinkHandler } from "./obsidian-link-provider";
+import { createObsidianOsc8LinkHandler } from "./obsidian-link-provider";
 import { VaultPathLinkProvider } from "./vault-path-link-provider";
+import { ObsidianLinkTransform } from "./obsidian-link-transform";
 
 export function sanitizeForPty(text: string): string {
   return text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
@@ -39,6 +40,7 @@ export class ClaudeTerminalView extends ItemView {
   private resizeObserver: ResizeObserver | null = null;
   private resizeTimeout: ReturnType<typeof setTimeout> | null = null;
   private wrapperEl: HTMLElement | null = null;
+  private linkTransform: ObsidianLinkTransform | null = null;
   private state: TerminalState = TerminalState.Closed;
   private readyCallbacks: ReadyPromiseCallbacks[] = [];
   private readonly instanceId: number;
@@ -124,14 +126,14 @@ export class ClaudeTerminalView extends ItemView {
       allowProposedApi: true,
       scrollback: 10000,
       convertEol: true,
+      linkHandler: createObsidianOsc8LinkHandler(this.app),
     });
+
+    this.linkTransform = new ObsidianLinkTransform();
 
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
     this.terminal.loadAddon(new WebLinksAddon());
-    this.terminal.loadAddon(
-      new WebLinksAddon(createObsidianLinkHandler(this.app), { urlRegex: OBSIDIAN_OPEN_URL_REGEX })
-    );
     this.terminal.registerLinkProvider(new VaultPathLinkProvider(this.terminal, this.app));
 
     this.terminal.open(this.wrapperEl);
@@ -252,7 +254,12 @@ export class ClaudeTerminalView extends ItemView {
         this.terminal?.cols ?? 80,
         this.terminal?.rows ?? 24,
         (data) => {
-          this.terminal?.write(data);
+          const transformed = this.linkTransform
+            ? this.linkTransform.transform(data)
+            : data;
+          if (transformed.length > 0) {
+            this.terminal?.write(transformed);
+          }
           if (this.state === TerminalState.Opening) {
             this.state = TerminalState.Ready;
             this.resolveAllCallbacks();
@@ -311,6 +318,7 @@ export class ClaudeTerminalView extends ItemView {
     this.terminalManager = null;
     this.resizeObserver = null;
     this.wrapperEl = null;
+    this.linkTransform = null;
     this.rejectAllCallbacks(new Error("Terminal view closed"));
   }
 }
