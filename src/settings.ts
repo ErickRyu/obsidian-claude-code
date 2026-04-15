@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type ClaudeTerminalPlugin from "./main";
 import {
   DEFAULT_CLAUDE_PATH,
@@ -119,7 +119,7 @@ export class ClaudeTerminalSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("MCP context server")
       .setDesc(
-        "Enable MCP server so Claude can access open notes, active file, and vault search. Requires terminal restart."
+        "Enable MCP server so Claude can access open notes, active file, and vault search. Existing terminals keep their previous state — restart them to pick up the change."
       )
       .addToggle((toggle) =>
         toggle
@@ -130,6 +130,12 @@ export class ClaudeTerminalSettingTab extends PluginSettingTab {
               enableMcp: value,
             };
             await this.plugin.saveSettings();
+            await this.plugin.reconfigureMcp();
+            new Notice(
+              value
+                ? "MCP enabled. Restart existing terminals to apply."
+                : "MCP disabled. Restart existing terminals to apply."
+            );
           })
       );
   }

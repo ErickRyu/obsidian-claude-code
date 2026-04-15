@@ -73,8 +73,21 @@ export default class ClaudeTerminalPlugin extends Plugin {
       })
     );
 
-    // MCP context bridge — lets Claude access open notes
+    // MCP context bridge — lets Claude access open notes.
+    // Event listeners stay registered for the lifetime of the plugin and
+    // no-op when the bridge is torn down, so `reconfigureMcp()` can swap
+    // the bridge in/out without re-registering (which would leak handlers).
     this.setupMcp();
+    this.registerEvent(
+      this.app.workspace.on("file-open", () => {
+        this.mcpBridge?.scheduleContextUpdate();
+      })
+    );
+    this.registerEvent(
+      this.app.workspace.on("layout-change", () => {
+        this.mcpBridge?.scheduleContextUpdate();
+      })
+    );
 
     this.addCommand({
       id: COMMAND_TOGGLE_TERMINAL,
@@ -270,18 +283,21 @@ export default class ClaudeTerminalPlugin extends Plugin {
 
     const cwd = this.settings.cwdOverride || vaultPath;
     this.mcpBridge.writeMcpConfig(cwd);
+  }
 
-    // Also update context when files are opened/closed
-    this.registerEvent(
-      this.app.workspace.on("file-open", () => {
-        this.mcpBridge?.scheduleContextUpdate();
-      })
-    );
-    this.registerEvent(
-      this.app.workspace.on("layout-change", () => {
-        this.mcpBridge?.scheduleContextUpdate();
-      })
-    );
+  /**
+   * Apply the current `enableMcp` setting at runtime by tearing down the
+   * existing bridge (if any) and re-running setup. Safe to call regardless
+   * of current state: teardown is a no-op when no bridge exists, and setup
+   * early-returns when the setting is disabled.
+   *
+   * Does NOT restart any already-spawned Claude CLI child processes — their
+   * `--mcp-config` arg was snapshotted at spawn time, so existing terminals
+   * keep the previous MCP state until the user restarts them.
+   */
+  async reconfigureMcp(): Promise<void> {
+    this.teardownMcp();
+    this.setupMcp();
   }
 
   private teardownMcp(): void {
