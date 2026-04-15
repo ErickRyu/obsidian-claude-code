@@ -154,22 +154,39 @@ exact line, not the top of the file.
 
 ---
 
-### [ ] Cmd+Click works without MCP enabled
+### [x] Cmd+Click works without MCP enabled
+**Completed:** v0.5.1 (branch `feat/cmd-click-no-mcp`)
 
-**What:** Today the obsidian:// URL system-prompt instruction is written by
-`McpContextBridge.writeSystemPrompt`, which only runs when MCP is enabled. If a user
-turns MCP off, Claude stops emitting the URL format and Cmd+Click stops finding URLs
-to click.
+Extracted `SystemPromptWriter` from `McpContextBridge`. URL format instruction now
+writes to `obsidian-prompt.txt` regardless of MCP setting. Plugin owns writer
+lifecycle; bridge layers context on top when MCP is enabled. Atomic write
+(temp + rename) prevents partial-file reads by claude CLI spawn. Vault name is
+read via getter so runtime vault renames are picked up on next write.
 
-**Why:** Cmd+Click should be a baseline plugin feature, independent of the MCP toggle.
+Reviewed via /autoplan (CEO + Eng dual voices). Uncovered pre-existing bug: MCP
+setting toggle does not hot-swap the bridge (see "MCP setting toggle requires
+plugin reload" below).
+
+---
+
+### [ ] MCP setting toggle requires plugin reload (pre-existing bug, found via /autoplan)
+
+**What:** Toggling `enableMcp` in the settings panel updates the persisted value
+but does NOT call `setupMcp()` / `teardownMcp()`. Users must disable/re-enable
+the plugin for the change to take effect. Running claude CLI children also snapshot
+their args at spawn time, so a terminal restart is needed even after plugin reload.
+
+**Why:** Reported by the Codex voice during /autoplan review of the
+`feat/cmd-click-no-mcp` PR. Surfaced as a separate, older bug not caused by that
+change.
 
 **How:**
-- Extract the URL-format instruction from `mcp-server.ts:writeSystemPrompt` into a
-  separate `system-prompt-writer.ts` module.
-- Always write that module's output to the prompt file, regardless of MCP setting.
-- When MCP is also enabled, the existing context block is appended on top.
+- In `src/settings.ts`, after persisting `enableMcp`, call back into the plugin
+  to run `teardownMcp()` then `setupMcp()` (or a single `reconfigureMcp()` helper).
+- Notify the user that existing terminals need a restart to pick up the new MCP
+  state (or auto-restart them, if safe).
 
-**Effort:** ~30 min CC time.
+**Effort:** ~1 hour CC time.
 
 ---
 

@@ -1,6 +1,6 @@
 {
   "name": "obsidian-claude-code",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Embed Claude Code terminal in Obsidian's sidebar",
   "main": "main.js",
   "scripts": {

@@ -2,6 +2,23 @@
 
 All notable changes to obsidian-claude-code will be documented in this file.
 
+## [0.5.1] - 2026-04-15
+
+### Added
+- **Clean terminal output for vault links.** Markdown-style Obsidian links (`[name](obsidian://open?...)`) are transformed into OSC 8 terminal hyperlinks before reaching xterm. Only the visible text shows on screen; the raw URL is hidden. Cmd/Ctrl+click on the visible text still opens the note.
+
+### Fixed
+- **Cmd/Ctrl+click now works when MCP is disabled.** Previously, the Obsidian URL format instruction that tells Claude how to emit clickable links was written only when the MCP context server was enabled. Turning MCP off silently broke the click-to-open feature. The instruction now writes to disk on plugin load regardless of MCP state.
+
+### Changed
+- System prompt file is written atomically (temp file + rename) so the Claude CLI can never spawn against a partially-written prompt file.
+- `SystemPromptWriter` owns prompt file lifecycle; the MCP bridge layers context on top when enabled.
+- `ObsidianLinkTransform` streams PTY output with bounded carry-over buffer for links that span chunk boundaries.
+- OSC 8 link handler routes `obsidian://` URLs through the existing vault-resolution path (Cmd/Ctrl-gated); other schemes open via `window.open`.
+
+### Known issues
+- Toggling the `enableMcp` setting at runtime still requires a plugin reload to take effect. This pre-existing bug is tracked separately in TODO.md.
+
 ## [0.5.0] - 2026-04-15
 
 ### Added
