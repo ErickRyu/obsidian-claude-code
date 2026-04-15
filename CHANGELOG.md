@@ -10,6 +10,7 @@ All notable changes to obsidian-claude-code will be documented in this file.
 
 ### Changed
 - Workspace `file-open` and `layout-change` listeners that drive MCP context refresh now register once at plugin load and no-op when the bridge is absent, so hot-swapping MCP on/off does not re-register handlers.
+- Release workflow now restricts its trigger to `v*` tags, verifies the tag version matches `manifest.json`, and attaches the matching `CHANGELOG.md` section as the release body. Drafts are still the default so maintainers can review before publishing.
 
 ## [0.5.1] - 2026-04-15
 
