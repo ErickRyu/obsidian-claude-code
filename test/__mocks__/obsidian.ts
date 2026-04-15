@@ -21,7 +21,11 @@ export class WorkspaceLeaf {
   view: any;
 }
 
-export class App {}
+export class App {
+  vault: any = { getName: () => "test-vault" };
+  workspace: any = { openLinkText: vi.fn() };
+  metadataCache: any = { getFirstLinkpathDest: vi.fn(() => null) };
+}
 
 export class SuggestModal<T> {
   app: any;

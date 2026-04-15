@@ -11,6 +11,8 @@ import { TerminalManager } from "./terminal-manager";
 import { buildXtermTheme } from "./theme-sync";
 import type { ClaudeTerminalSettings } from "./settings";
 import { FileSuggestModal } from "./file-suggest-modal";
+import { OBSIDIAN_OPEN_URL_REGEX, createObsidianLinkHandler } from "./obsidian-link-provider";
+import { VaultPathLinkProvider } from "./vault-path-link-provider";
 
 export function sanitizeForPty(text: string): string {
   return text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
@@ -127,6 +129,10 @@ export class ClaudeTerminalView extends ItemView {
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
     this.terminal.loadAddon(new WebLinksAddon());
+    this.terminal.loadAddon(
+      new WebLinksAddon(createObsidianLinkHandler(this.app), { urlRegex: OBSIDIAN_OPEN_URL_REGEX })
+    );
+    this.terminal.registerLinkProvider(new VaultPathLinkProvider(this.terminal, this.app));
 
     this.terminal.open(this.wrapperEl);
 

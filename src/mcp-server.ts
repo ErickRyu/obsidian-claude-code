@@ -215,6 +215,16 @@ export class McpContextBridge {
 
     lines.push("(Use get_active_note or read_note MCP tools for note content)");
 
+    const encodedVault = encodeURIComponent(this.app.vault.getName());
+    lines.push(
+      "",
+      "When you reference a vault note in your reply, format it as an Obsidian URL so the user can Cmd/Ctrl+click it:",
+      `  [<basename>](obsidian://open?vault=${encodedVault}&path=<url-encoded-vault-relative-path-with-extension>)`,
+      `Example: [llm-strategic-bias](obsidian://open?vault=${encodedVault}&path=personal-wiki%2Fconcepts%2Fllm-strategic-bias.md)`,
+      "Use this format only for files that exist in the user's vault. Always include the file extension.",
+      "CRITICAL: percent-encode the entire path. Spaces must become %20, Korean and other non-ASCII chars must be encodeURIComponent'd. A literal space in the URL breaks click handling when the line wraps in the sidebar."
+    );
+
     try {
       fs.writeFileSync(this.promptFilePath, lines.join("\n") + "\n");
     } catch {

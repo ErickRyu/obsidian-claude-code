@@ -132,6 +132,69 @@ a specific past session.
 
 ## v0.5.0 — Medium effort improvements
 
+### [ ] Cmd+Click — line jump support
+
+**What:** Extend `obsidian://open` link generation and the click handler to honor a
+line number when Claude references a specific line. e.g.
+`obsidian://open?vault=...&path=foo.md&line=42` opens the note and scrolls/cursors
+to line 42.
+
+**Why:** VSCode parity. When Claude says "see foo.md:42", the user should land on that
+exact line, not the top of the file.
+
+**How:**
+- Update the system-prompt instruction in `mcp-server.ts:writeSystemPrompt` to include
+  `&line=N` when Claude references a specific line.
+- In `obsidian-link-provider.ts:createObsidianLinkHandler`, after `openLinkText`,
+  read the `line` param. If present, use `app.workspace.getActiveViewOfType(MarkdownView)`
+  → `editor.setCursor({ line: parseInt(line)-1, ch: 0 })` and scroll into view.
+- Also extend `vault-path-link-provider.ts` to detect `:N` suffix on raw paths.
+
+**Effort:** ~1 hour CC time.
+
+---
+
+### [ ] Cmd+Click works without MCP enabled
+
+**What:** Today the obsidian:// URL system-prompt instruction is written by
+`McpContextBridge.writeSystemPrompt`, which only runs when MCP is enabled. If a user
+turns MCP off, Claude stops emitting the URL format and Cmd+Click stops finding URLs
+to click.
+
+**Why:** Cmd+Click should be a baseline plugin feature, independent of the MCP toggle.
+
+**How:**
+- Extract the URL-format instruction from `mcp-server.ts:writeSystemPrompt` into a
+  separate `system-prompt-writer.ts` module.
+- Always write that module's output to the prompt file, regardless of MCP setting.
+- When MCP is also enabled, the existing context block is appended on top.
+
+**Effort:** ~30 min CC time.
+
+---
+
+### [ ] Measure Cmd+Click hit rate
+
+**What:** Track how often Claude's terminal output actually contains a clickable
+vault link (obsidian:// URL or raw vault path) versus how often it shows a raw,
+non-clickable path. If the rate is consistently below 70%, we should add a fallback
+(MCP `open_note` tool, or a more aggressive raw-path matcher).
+
+**Why:** The current design assumes Claude follows the system-prompt instruction
+"most of the time". We have no instrumentation to verify.
+
+**How:**
+- Add a debug counter (per-session, in-memory only) that increments when a link
+  provider emits a link versus when terminal output contains a `.md` token that
+  failed to resolve.
+- Print the ratio in the developer console on session end.
+- If below 70% consistently across multiple users, escalate to plan C (MCP open_note
+  tool) per the original autoplan decision.
+
+**Effort:** ~1 hour CC time + 1 week of dogfooding.
+
+---
+
 ### [ ] Tab icon status dots
 
 **What:** The sidebar tab icon for a Claude terminal shows a colored dot:

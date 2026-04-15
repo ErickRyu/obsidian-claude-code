@@ -2,6 +2,15 @@
 
 All notable changes to obsidian-claude-code will be documented in this file.
 
+## [0.5.0] - 2026-04-15
+
+### Added
+- **Cmd/Ctrl+click vault notes**: Click any vault path or `obsidian://open` URL Claude prints in the terminal to jump straight to the note in Obsidian
+- **Smart path detection**: Recognizes paths with spaces, Korean characters, and Markdown link syntax — only highlights paths that actually exist in your vault
+
+### Changed
+- **System prompt now instructs Claude to format vault references as clickable Obsidian URLs** with percent-encoded paths so click-to-open works reliably even when the terminal wraps long lines
+
 ## [0.4.0] - 2026-04-12
 
 ### Added

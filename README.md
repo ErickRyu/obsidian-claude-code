@@ -8,6 +8,7 @@ Embed Claude Code as an interactive terminal right in Obsidian's sidebar. Open i
 - **Multi-tab support** — Open multiple Claude Code terminals simultaneously
 - **Automatic workspace context** — Claude Code automatically knows which notes are open and which one is active, without you having to tell it
 - **MCP context server** — Built-in MCP server exposes tools so Claude can read your open notes, search the vault, and fetch any note on demand
+- **Cmd/Ctrl+click vault notes** — Click any vault path or `obsidian://open` URL Claude prints in the terminal to open the corresponding note in Obsidian
 - **Send selection** — Select text in a note, run a command, and it appears in Claude's input with file path and line numbers
 - **Send current file** — Send the active file's path to Claude with one command
 - **Focus toggle** — Switch between editor and terminal without touching the mouse
