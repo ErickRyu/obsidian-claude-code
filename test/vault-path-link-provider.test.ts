@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { App, type TFile } from "obsidian";
 import type { ILink } from "@xterm/xterm";
 import { VaultPathLinkProvider } from "../src/vault-path-link-provider";
+import { EmissionMetrics } from "../src/emission-metrics";
 
 function makeFile(path: string): TFile {
   return { path } as TFile;
@@ -140,6 +141,34 @@ describe("VaultPathLinkProvider", () => {
     const links = collectLinks(provider);
     links[0].activate(clickEvent({}), links[0].text);
     expect(app.workspace.openLinkText).not.toHaveBeenCalled();
+  });
+
+  describe("emission metrics", () => {
+    it("increments vaultPathMentioned only for resolved paths", () => {
+      const file = makeFile("a.md");
+      app = makeApp({ "a.md": file });
+      const metrics = new EmissionMetrics();
+      const term = makeTerminal("see a.md and missing.md here");
+      const provider = new VaultPathLinkProvider(term, app, metrics);
+      collectLinks(provider);
+      expect(metrics.vaultPathMentioned).toBe(1);
+    });
+
+    it("does not increment when no path resolves", () => {
+      const metrics = new EmissionMetrics();
+      const term = makeTerminal("see README.md for details");
+      const provider = new VaultPathLinkProvider(term, app, metrics);
+      collectLinks(provider);
+      expect(metrics.vaultPathMentioned).toBe(0);
+    });
+
+    it("works without a metrics collector", () => {
+      const file = makeFile("a.md");
+      app = makeApp({ "a.md": file });
+      const term = makeTerminal("see a.md");
+      const provider = new VaultPathLinkProvider(term, app);
+      expect(() => collectLinks(provider)).not.toThrow();
+    });
   });
 
   it("re-resolves at click time and aborts if the file disappeared", () => {

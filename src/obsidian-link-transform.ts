@@ -9,6 +9,13 @@
 // chunk ending in `[name](obsid`) is buffered and re-joined with the next
 // chunk. The buffer is bounded — if the partial never completes within
 // MAX_BUFFER chars we flush it as plain text and move on.
+//
+// When an `EmissionMetrics` collector is supplied, the transformer also
+// bumps the `linkMarkdownEmitted` counter once per wrapped markdown link,
+// which the plugin logs at session end to gauge whether Claude follows the
+// system-prompt format.
+
+import type { EmissionMetrics } from "./emission-metrics";
 
 const OSC = "\x1b]";
 const ST = "\x1b\\";
@@ -41,6 +48,8 @@ const MAX_BUFFER = 4096;
 export class ObsidianLinkTransform {
   private buffer = "";
 
+  constructor(private readonly metrics?: EmissionMetrics) {}
+
   /**
    * Transform a chunk of PTY output. Returns the transformed string to write
    * to xterm. May hold trailing bytes internally if the chunk ends mid-link.
@@ -71,11 +80,17 @@ export class ObsidianLinkTransform {
     // them.
     const afterMarkdown = processable.replace(
       COMPLETE_LINK_RE,
-      (_, text: string, url: string) => `${OSC}8;;${url}${ST}${text}${OSC}8;;${ST}`
+      (_, text: string, url: string) => {
+        this.metrics?.recordMarkdownLink();
+        return `${OSC}8;;${url}${ST}${text}${OSC}8;;${ST}`;
+      }
     );
     return afterMarkdown.replace(
       BARE_URL_RE,
-      (_, url: string) => `${OSC}8;;${url}${ST}${basenameFromUrl(url)}${OSC}8;;${ST}`
+      (_, url: string) => {
+        this.metrics?.recordBareUrl();
+        return `${OSC}8;;${url}${ST}${basenameFromUrl(url)}${OSC}8;;${ST}`;
+      }
     );
   }
 

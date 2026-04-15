@@ -17,6 +17,7 @@ import {
 import { ensureNodePty } from "./native-bootstrap";
 import { McpContextBridge } from "./mcp-server";
 import { SystemPromptWriter } from "./system-prompt-writer";
+import { EmissionMetrics } from "./emission-metrics";
 
 export default class ClaudeTerminalPlugin extends Plugin {
   settings: ClaudeTerminalSettings = DEFAULT_SETTINGS;
@@ -24,6 +25,7 @@ export default class ClaudeTerminalPlugin extends Plugin {
   private lastActiveTerminalLeaf: WorkspaceLeaf | null = null;
   private mcpBridge: McpContextBridge | null = null;
   private promptWriter: SystemPromptWriter | null = null;
+  private emissionMetrics: EmissionMetrics | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -50,13 +52,18 @@ export default class ClaudeTerminalPlugin extends Plugin {
     );
     this.promptWriter.writeBase();
 
+    // Shared across all terminal views so ratios reflect the whole session,
+    // not a single tab. Logged on plugin unload via `EmissionMetrics.report`.
+    this.emissionMetrics = new EmissionMetrics();
+
     this.registerView(VIEW_TYPE_CLAUDE_TERMINAL, (leaf) => {
       return new ClaudeTerminalView(
         leaf,
         () => this.settings,
         () => this.getVaultBasePath(),
         () => this.getPluginDir(),
-        () => this.promptWriter?.getPromptFilePath() ?? null
+        () => this.promptWriter?.getPromptFilePath() ?? null,
+        () => this.emissionMetrics
       );
     });
 
@@ -207,6 +214,8 @@ export default class ClaudeTerminalPlugin extends Plugin {
     this.teardownMcp();
     this.promptWriter?.dispose();
     this.promptWriter = null;
+    this.emissionMetrics?.report();
+    this.emissionMetrics = null;
   }
 
   private async toggleView(): Promise<void> {

@@ -1,5 +1,6 @@
 import { App, type TFile } from "obsidian";
 import type { Terminal, ILinkProvider, ILink } from "@xterm/xterm";
+import type { EmissionMetrics } from "./emission-metrics";
 
 const VAULT_EXTENSIONS = ["md", "canvas"];
 // Strong terminators that always break a path candidate.
@@ -28,7 +29,8 @@ const EXT_TAIL_REGEX = new RegExp(
 export class VaultPathLinkProvider implements ILinkProvider {
   constructor(
     private readonly terminal: Terminal,
-    private readonly app: App
+    private readonly app: App,
+    private readonly metrics?: EmissionMetrics
   ) {}
 
   provideLinks(y: number, callback: (links: ILink[] | undefined) => void): void {
@@ -72,6 +74,9 @@ export class VaultPathLinkProvider implements ILinkProvider {
       const end = chosen.start + chosen.candidate.length;
       if (taken.some(([a, b]) => chosen!.start < b && end > a)) continue;
       taken.push([chosen.start, end]);
+
+      // Only resolved paths count — unresolved matches are false positives.
+      this.metrics?.recordVaultPathMentioned();
 
       links.push({
         range: {
