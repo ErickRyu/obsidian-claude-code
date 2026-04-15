@@ -85,4 +85,61 @@ describe("ObsidianLinkTransform", () => {
     expect(t.flush()).toBe("[foo](obsidi");
     expect(t.flush()).toBe("");
   });
+
+  // Regression: ESC sequences like `\x1b[?1;2c`, `\x1b[31m`, `\x1b[K` contain
+  // `[` that must NOT be treated as a partial markdown-link start. Before
+  // the fix, these were buffered, which (a) split the ESC sequence, causing
+  // xterm to render `^[` as visible text, and (b) delayed every keystroke
+  // echo because shell/Claude output is saturated with ANSI codes.
+  describe("ANSI escape sequence handling (regression)", () => {
+    it("preserves a DA-style escape sequence intact", () => {
+      const t = new ObsidianLinkTransform();
+      const input = "\x1b[?1;2c";
+      expect(t.transform(input)).toBe(input);
+      expect(t.flush()).toBe("");
+    });
+
+    it("preserves ANSI color sequences around plain text", () => {
+      const t = new ObsidianLinkTransform();
+      const input = "\x1b[31mhello\x1b[0m";
+      expect(t.transform(input)).toBe(input);
+      expect(t.flush()).toBe("");
+    });
+
+    it("does not split an ESC sequence that straddles two chunks", () => {
+      const t = new ObsidianLinkTransform();
+      // Chunk 1 ends mid-CSI — must pass through untouched so xterm can
+      // complete the parse with chunk 2.
+      expect(t.transform("\x1b[3")).toBe("\x1b[3");
+      expect(t.transform("1m")).toBe("1m");
+    });
+
+    it("still converts an obsidian link that follows an ANSI color reset", () => {
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v&path=foo.md";
+      const input = `see \x1b[0m [foo](${url}) here`;
+      expect(t.transform(input)).toBe(`see \x1b[0m ${osc8(url, "foo")} here`);
+    });
+
+    it("does not buffer a typical shell prompt ending in brackets", () => {
+      const t = new ObsidianLinkTransform();
+      const input = "erick-obsidian-vault (main*) [Opus 4.6 (1M context)]";
+      expect(t.transform(input)).toBe(input);
+      expect(t.flush()).toBe("");
+    });
+
+    it("does not buffer `[` preceded by a non-boundary character", () => {
+      const t = new ObsidianLinkTransform();
+      expect(t.transform("abc[def")).toBe("abc[def");
+      expect(t.flush()).toBe("");
+    });
+
+    it("still buffers a genuine partial obsidian link at word boundary", () => {
+      // Make sure the boundary guard didn't break the real use case.
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v&path=a.md";
+      expect(t.transform("prefix [fo")).toBe("prefix ");
+      expect(t.transform(`o](${url}) tail`)).toBe(`${osc8(url, "foo")} tail`);
+    });
+  });
 });

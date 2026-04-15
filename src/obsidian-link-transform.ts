@@ -15,7 +15,10 @@ const ST = "\x1b\\";
 
 // Matches a complete markdown link whose target is obsidian://open?...
 // Group 1: visible text, Group 2: URL.
-const COMPLETE_LINK_RE = /\[([^\]\n]+)\]\((obsidian:\/\/open\?[^)\s]*)\)/g;
+// The negative lookbehind `(?<!\x1b)` rejects `[` that is part of an ANSI
+// CSI sequence (\x1b[...), which otherwise causes the regex to greedily
+// swallow terminal output from the CSI all the way to the real link.
+const COMPLETE_LINK_RE = /(?<!\x1b)\[([^\]\n\x1b]+)\]\((obsidian:\/\/open\?[^)\s]*)\)/g;
 
 // Maximum chars held across chunks while waiting for a link to close.
 // Beyond this we flush and give up — prevents unbounded growth on noisy input.
@@ -74,15 +77,30 @@ export class ObsidianLinkTransform {
     const tailStart = lastNewline + 1;
     const tail = s.slice(tailStart);
 
-    // Find the last `[` in the tail that hasn't been closed by `)`.
+    // Find the last `[` in the tail that hasn't been closed by `)` AND is a
+    // plausible markdown-link start. A `[` is NOT a link start when it is
+    // part of an ANSI CSI escape sequence (immediately preceded by \x1b) or
+    // when it is in the middle of a word (preceded by a letter/digit). Both
+    // false positives are frequent enough in terminal output that failing to
+    // reject them corrupts ESC sequences and delays typing echo.
     let lastOpen = -1;
     for (let i = tail.length - 1; i >= 0; i--) {
       const ch = tail[i];
       if (ch === ")") return null; // tail ends with a closed group — nothing partial
-      if (ch === "[") {
-        lastOpen = i;
-        break;
+      if (ch !== "[") continue;
+      // Reject `[` inside an ANSI CSI escape sequence (\x1b[...)
+      if (i > 0 && tail.charCodeAt(i - 1) === 0x1b) continue;
+      // Reject `[` in the middle of a word; real links in Claude's output
+      // are always preceded by whitespace, a newline, or an open-paren.
+      if (i > 0) {
+        const prev = tail[i - 1];
+        const isBoundary =
+          prev === " " || prev === "\t" || prev === "\r" ||
+          prev === "(" || prev === ">";
+        if (!isBoundary) continue;
       }
+      lastOpen = i;
+      break;
     }
     if (lastOpen < 0) return null;
 
