@@ -466,7 +466,7 @@ describe("Sub-AC 3 of AC 1 — MH-07/MH-08/MH-09 readiness + error/stderr + uiMo
       expect(registeredCommands).toEqual([]);
     });
 
-    it("uiMode='webview' → wireWebview registers VIEW_TYPE_CLAUDE_WEBVIEW + COMMAND_OPEN_WEBVIEW (one each)", () => {
+    it("uiMode='webview' → wireWebview registers VIEW_TYPE_CLAUDE_WEBVIEW + COMMAND_OPEN_WEBVIEW (+ resume command in Phase 5a)", () => {
       const plugin = new Plugin() as unknown as WebviewPluginHost;
       plugin.settings = { uiMode: "webview" };
       const registeredViews: string[] = [];
@@ -480,7 +480,11 @@ describe("Sub-AC 3 of AC 1 — MH-07/MH-08/MH-09 readiness + error/stderr + uiMo
       }) as unknown as Plugin["addCommand"];
       wireWebview(plugin);
       expect(registeredViews).toEqual([VIEW_TYPE_CLAUDE_WEBVIEW]);
-      expect(registeredCommands).toEqual([COMMAND_OPEN_WEBVIEW]);
+      // Phase 5a adds a second "resume last" command. The MH-07/08/09
+      // readiness contract only requires COMMAND_OPEN_WEBVIEW to survive —
+      // assert contains instead of exact equality so Phase 5b can add more.
+      expect(registeredCommands).toContain(COMMAND_OPEN_WEBVIEW);
+      expect(registeredCommands.length).toBeGreaterThanOrEqual(1);
     });
   });
 });

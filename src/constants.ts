@@ -2,6 +2,7 @@ export const VIEW_TYPE_CLAUDE_TERMINAL = "claude-terminal-view";
 export const VIEW_TYPE_CLAUDE_WEBVIEW = "claude-webview";
 export const COMMAND_TOGGLE_TERMINAL = "open-claude-terminal";
 export const COMMAND_OPEN_WEBVIEW = "claude-webview:open";
+export const COMMAND_RESUME_WEBVIEW = "claude-webview:resume";
 export const COMMAND_SEND_SELECTION = "send-selection-to-claude";
 export const COMMAND_SEND_FILE = "send-file-to-claude";
 export const COMMAND_FOCUS_TERMINAL = "focus-claude-terminal";

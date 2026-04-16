@@ -65,6 +65,17 @@ import {
   createTodoPanelState,
   renderTodoPanel,
 } from "../src/webview/renderers/todo-panel";
+import {
+  createSystemStatusState,
+  renderSystemStatus,
+  createSystemHookState,
+  renderSystemHook,
+} from "../src/webview/renderers/system-status";
+import {
+  createCompactBoundaryState,
+  renderCompactBoundary,
+} from "../src/webview/renderers/compact-boundary";
+import { buildStatusBar } from "../src/webview/ui/status-bar";
 import type { StreamEvent } from "../src/webview/parser/types";
 
 const ROOT = resolve(__dirname, "..");
@@ -79,6 +90,9 @@ const FIXTURE_DIR = join(ROOT, "test", "fixtures", "stream-json");
  */
 const FIXTURE_TO_PHASE: Record<string, string> = {
   "todo.jsonl": "phase-4b",
+  "slash-compact.jsonl": "phase-5a",
+  "slash-mcp.jsonl": "phase-5a",
+  "resume.jsonl": "phase-5a",
 };
 
 function phaseDirFor(fixtureName: string): string {
@@ -112,6 +126,21 @@ interface RenderEvidence {
   assistantToolUseCardIsSummary: boolean;
   /** Phase 4b: aggregated textContent of the todo-summary card(s). */
   assistantToolUseTextIncludes: string;
+  /** Phase 5a: count of `.claude-wv-card--compact-boundary` cards (SH-04). */
+  compactBoundaryCount: number;
+  /** Phase 5a: count of hook cards rendered with showDebug=false (must be 0 — MH-07). */
+  hookCardCountDebugOff: number;
+  /** Phase 5a: true iff the result card textContent includes the CLI's
+   *  `result.result` friendly-error string AND no `--unknown` fallback
+   *  card was emitted for this fixture. */
+  friendlyErrorShown: boolean;
+  /** Phase 5a: true iff any `.claude-wv-card--unknown` appeared in the
+   *  cards tree. Phase 5a renderer must surface friendly errors through
+   *  the Phase 2 result card, not the UnknownEvent JSON dump. */
+  rawJsonDumpShown: boolean;
+  /** Phase 5a: true iff the status bar (`.claude-wv-status-bar`) is
+   *  mounted in headerEl after replay. */
+  statusBarMounted: boolean;
   assertions: Array<{ id: string; desc: string; actual: number | boolean; pass: boolean }>;
 }
 
@@ -132,6 +161,8 @@ function main(): void {
   const events: StreamEvent[] = replay.events;
 
   const { document: doc } = new Window();
+  const headerEl = doc.createElement("div");
+  headerEl.classList.add("claude-wv-header");
   const cardsEl = doc.createElement("div");
   cardsEl.classList.add("claude-wv-cards");
   const todoSideEl = doc.createElement("div");
@@ -140,7 +171,7 @@ function main(): void {
   // renderers/ui/ discipline enforced by the 4a-5 grep gate.  The script
   // directory is outside that gate, but the codebase convention is worth
   // keeping so future audits don't have to special-case scripts/.
-  doc.body.replaceChildren(cardsEl, todoSideEl);
+  doc.body.replaceChildren(headerEl, cardsEl, todoSideEl);
 
   const states = {
     assistantText: createAssistantTextState(),
@@ -151,11 +182,16 @@ function main(): void {
     userToolResult: createUserToolResultState(),
     result: createResultState(),
     systemInit: createSystemInitState(),
+    systemStatus: createSystemStatusState(),
+    systemHook: createSystemHookState(),
+    compactBoundary: createCompactBoundaryState(),
   };
 
+  const headerElAsHtml = headerEl as unknown as HTMLElement;
   const cardsElAsHtml = cardsEl as unknown as HTMLElement;
   const todoSideElAsHtml = todoSideEl as unknown as HTMLElement;
   const docAsDoc = doc as unknown as Document;
+  const statusBar = buildStatusBar(headerElAsHtml, docAsDoc);
 
   for (const ev of events) {
     switch (ev.type) {
@@ -183,10 +219,35 @@ function main(): void {
         break;
       case "result":
         renderResult(states.result, cardsElAsHtml, ev, docAsDoc);
+        statusBar.update(ev);
         break;
       case "system":
-        if (ev.subtype === "init") {
-          renderSystemInit(states.systemInit, cardsElAsHtml, ev, docAsDoc);
+        switch (ev.subtype) {
+          case "init":
+            renderSystemInit(states.systemInit, cardsElAsHtml, ev, docAsDoc);
+            break;
+          case "status":
+            renderSystemStatus(states.systemStatus, headerElAsHtml, ev, docAsDoc);
+            break;
+          case "compact_boundary":
+            renderCompactBoundary(
+              states.compactBoundary,
+              cardsElAsHtml,
+              ev,
+              docAsDoc,
+            );
+            break;
+          case "hook_started":
+          case "hook_response":
+            // MH-07 evidence path — showDebug=false produces 0 hook cards.
+            renderSystemHook(
+              states.systemHook,
+              cardsElAsHtml,
+              ev,
+              docAsDoc,
+              { showDebug: false },
+            );
+            break;
         }
         break;
       case "rate_limit_event":
@@ -259,6 +320,35 @@ function main(): void {
     genericToolUseIdsForTodoWrite.length === 0 &&
     summaryIds.size > 0;
 
+  // Phase 5a metrics.
+  const compactBoundaryCount = cardEls.filter((el) =>
+    el.classList.contains("claude-wv-card--compact-boundary"),
+  ).length;
+  const hookCardCountDebugOff = cardEls.filter((el) =>
+    el.classList.contains("claude-wv-card--system-hook"),
+  ).length;
+  const rawJsonDumpShown = cardEls.some((el) =>
+    el.classList.contains("claude-wv-card--unknown"),
+  );
+  // Friendly error — find result cards whose "message" row textContent is
+  // non-empty (Phase 5a result renderer adds this row iff `result.result`
+  // is a non-empty string — slash-mcp triggers it).
+  const resultCards = cardEls.filter((el) =>
+    el.classList.contains("claude-wv-card--result"),
+  );
+  let friendlyErrorShown = false;
+  for (const rc of resultCards) {
+    const rows = rc.querySelectorAll(".claude-wv-result-row");
+    for (const row of Array.from(rows)) {
+      const keyText = (row.querySelector(".claude-wv-result-key")?.textContent ?? "").trim();
+      if (keyText !== "message") continue;
+      const valueText = (row.querySelector(".claude-wv-result-value")?.textContent ?? "").trim();
+      if (valueText.length > 0) friendlyErrorShown = true;
+    }
+  }
+  const statusBarMounted =
+    headerEl.querySelectorAll(".claude-wv-status-bar").length > 0;
+
   const assertions: RenderEvidence["assertions"] = [];
   if (fixtureName === "edit.jsonl") {
     assertions.push({
@@ -291,6 +381,28 @@ function main(): void {
       pass: todoSideItemCount > 0 && assistantToolUseCardIsSummary && summaryPass,
     });
   }
+  if (fixtureName === "slash-compact.jsonl") {
+    assertions.push({
+      id: "SH-04",
+      desc: "compact_boundary card rendered at least once (SH-04)",
+      actual: compactBoundaryCount,
+      pass: compactBoundaryCount >= 1,
+    });
+    assertions.push({
+      id: "MH-07",
+      desc: "hook_* cards are hidden by default (showDebug=false → 0 cards)",
+      actual: hookCardCountDebugOff,
+      pass: hookCardCountDebugOff === 0,
+    });
+  }
+  if (fixtureName === "slash-mcp.jsonl") {
+    assertions.push({
+      id: "MH-07",
+      desc: "hook_* cards are hidden by default (showDebug=false → 0 cards)",
+      actual: hookCardCountDebugOff,
+      pass: hookCardCountDebugOff === 0,
+    });
+  }
 
   const evidence: RenderEvidence = {
     generatedBy: "scripts/render-fixture.ts",
@@ -313,6 +425,11 @@ function main(): void {
     todoSideItemCount,
     assistantToolUseCardIsSummary,
     assistantToolUseTextIncludes,
+    compactBoundaryCount,
+    hookCardCountDebugOff,
+    friendlyErrorShown,
+    rawJsonDumpShown,
+    statusBarMounted,
     assertions,
   };
 
@@ -324,7 +441,9 @@ function main(): void {
   console.log(
     `[render-fixture] wrote ${outFile} — cards=${evidence.cardCount} ` +
       `add=${diffAddedCount} remove=${diffRemovedCount} thinking=${thinkingCardCount} ` +
-      `todoItems=${todoSideItemCount} summary=${assistantToolUseCardIsSummary}`,
+      `todoItems=${todoSideItemCount} summary=${assistantToolUseCardIsSummary} ` +
+      `compact=${compactBoundaryCount} hooksOff=${hookCardCountDebugOff} ` +
+      `friendlyErr=${friendlyErrorShown} statusBar=${statusBarMounted}`,
   );
 
   // Also write the cardsEl.outerHTML for debugging + manual inspection.

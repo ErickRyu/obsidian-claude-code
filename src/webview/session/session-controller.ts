@@ -31,6 +31,7 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { LineBuffer } from "../parser/line-buffer";
 import { parseLine } from "../parser/stream-json-parser";
+import type { StreamEvent } from "../parser/types";
 import type { Bus } from "../event-bus";
 import { buildSpawnArgs, type SpawnArgsSettings } from "./spawn-args";
 
@@ -52,6 +53,14 @@ export interface SessionControllerOptions {
   readonly bus: Bus;
   readonly spawnImpl: SpawnImpl;
   readonly cwd?: string;
+  /**
+   * Phase 5a — fired the first time a `result` event arrives with a
+   * non-empty `session_id`. The webview wiring uses this to persist the
+   * id into `settings.lastSessionId` so a later "Resume last" command
+   * can append `--resume <id>`. Idempotent within a single controller
+   * instance: subsequent result events with the same id do not re-fire.
+   */
+  readonly onSessionId?: (sessionId: string) => void;
 }
 
 const activeSessionControllers = new Set<SessionController>();
@@ -77,6 +86,7 @@ export class SessionController {
   private disposed = false;
   private readonly drainQueue: string[] = [];
   private awaitingDrain = false;
+  private lastNotifiedSessionId: string | null = null;
 
   constructor(private readonly opts: SessionControllerOptions) {
     activeSessionControllers.add(this);
@@ -194,11 +204,34 @@ export class SessionController {
     for (const line of lines) {
       const parsed = parseLine(line);
       if (parsed.ok) {
+        this.notifySessionIdIfNew(parsed.event);
         this.opts.bus.emit({ kind: "stream.event", event: parsed.event });
       }
       // Malformed lines are silent: `parser-schema.test.ts` already
       // exercises the schema-rejection branch; surfacing them here as
       // session.error would spam during normal claude -p warm-up.
+    }
+  }
+
+  private notifySessionIdIfNew(event: StreamEvent): void {
+    // MED-2 (review) — guard against a late stdout/handleExit delivery
+    // racing a dispose. `persistSettings` touches Obsidian internals
+    // (saveSettings) and must not fire for a closed controller.
+    if (this.disposed) return;
+    if (event.type !== "result") return;
+    const sid = event.session_id;
+    if (typeof sid !== "string" || sid.length === 0) return;
+    if (sid === this.lastNotifiedSessionId) return;
+    this.lastNotifiedSessionId = sid;
+    const cb = this.opts.onSessionId;
+    if (cb) {
+      try {
+        cb(sid);
+      } catch {
+        // Callback failures must never poison stdout parsing — we log via
+        // session.error so the UI surfaces the incident.
+        this.emitError("onSessionId callback threw");
+      }
     }
   }
 
@@ -217,6 +250,7 @@ export class SessionController {
     if (tail !== null) {
       const parsed = parseLine(tail);
       if (parsed.ok) {
+        this.notifySessionIdIfNew(parsed.event);
         this.opts.bus.emit({ kind: "stream.event", event: parsed.event });
       }
     }

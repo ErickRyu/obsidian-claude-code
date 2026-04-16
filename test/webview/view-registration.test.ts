@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { Plugin } from "obsidian";
 import { wireWebview, type WebviewPluginHost } from "../../src/webview";
-import { VIEW_TYPE_CLAUDE_WEBVIEW } from "../../src/constants";
+import {
+  VIEW_TYPE_CLAUDE_WEBVIEW,
+  COMMAND_OPEN_WEBVIEW,
+  COMMAND_RESUME_WEBVIEW,
+} from "../../src/constants";
 
 function makeHost(uiMode: "terminal" | "webview"): WebviewPluginHost {
   const plugin = new Plugin() as unknown as WebviewPluginHost;
@@ -12,7 +16,7 @@ function makeHost(uiMode: "terminal" | "webview"): WebviewPluginHost {
 }
 
 describe("wireWebview", () => {
-  it("registers VIEW_TYPE_CLAUDE_WEBVIEW when uiMode === webview", () => {
+  it("registers VIEW_TYPE_CLAUDE_WEBVIEW + open + resume commands when uiMode === webview", () => {
     const host = makeHost("webview");
 
     wireWebview(host);
@@ -23,8 +27,14 @@ describe("wireWebview", () => {
     expect(typeof regMock.mock.calls[0][1]).toBe("function");
 
     const cmdMock = host.addCommand as unknown as ReturnType<typeof vi.fn>;
-    expect(cmdMock).toHaveBeenCalledTimes(1);
-    expect(cmdMock.mock.calls[0][0].id).toBe("claude-webview:open");
+    // Phase 5a adds a second command (resume last). Assert both are present
+    // rather than asserting exact invocation count so future 5b additions
+    // do not force a cascading test edit.
+    const registeredIds = cmdMock.mock.calls.map(
+      (c: unknown[]) => (c[0] as { id: string }).id,
+    );
+    expect(registeredIds).toContain(COMMAND_OPEN_WEBVIEW);
+    expect(registeredIds).toContain(COMMAND_RESUME_WEBVIEW);
   });
 
   it("does not register anything when uiMode === terminal (zero regression)", () => {

@@ -63,6 +63,13 @@ export function renderResult(
     buildRow(doc, "tokens", formatTokens(event.usage)),
     buildRow(doc, "turns", formatNumber(event.num_turns)),
   ];
+  // Phase 5a — surface `result.result` as a friendly "message" row when the
+  // CLI attached a human-readable string (e.g. slash-mcp's "Unknown command:
+  // /mcp"). Absent / empty → row omitted so legacy fixture assertions that
+  // expect five rows continue to pass.
+  if (typeof event.result === "string" && event.result.length > 0) {
+    rows.push(buildRow(doc, "message", event.result));
+  }
   card.replaceChildren(...rows);
 
   if (isNewCard) {

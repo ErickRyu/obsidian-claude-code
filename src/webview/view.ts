@@ -50,6 +50,23 @@ import {
   type TodoPanelRenderState,
 } from "./renderers/todo-panel";
 import {
+  createSystemStatusState,
+  renderSystemStatus,
+  createSystemHookState,
+  renderSystemHook,
+  type SystemStatusRenderState,
+  type SystemHookRenderState,
+} from "./renderers/system-status";
+import {
+  createCompactBoundaryState,
+  renderCompactBoundary,
+  type CompactBoundaryRenderState,
+} from "./renderers/compact-boundary";
+import {
+  buildStatusBar,
+  type StatusBarHandle,
+} from "./ui/status-bar";
+import {
   buildPermissionDropdown,
   type PermissionDropdownSettings,
 } from "./ui/permission-dropdown";
@@ -73,6 +90,12 @@ import type { PermissionPreset } from "./settings-adapter";
 
 export interface WebviewRenderOptionsSnapshot {
   readonly showThinking: boolean;
+  /**
+   * Phase 5a — hook_started / hook_response cards are hidden by default
+   * (MH-07). When `true`, the system-hook renderer emits a collapsed
+   * `<details>` card per hook event instead of dropping it.
+   */
+  readonly showDebugSystemEvents: boolean;
 }
 
 /**
@@ -87,6 +110,14 @@ export interface WebviewMutableSettings extends PermissionDropdownSettings {
   permissionPreset: PermissionPreset;
   readonly claudePath: string;
   readonly extraArgs: string;
+  /**
+   * Phase 5a — the SessionController's `onSessionId` callback writes the
+   * most recent `result.session_id` here so a later "Resume last" command
+   * can fetch it without going through plugin.settings. The field is
+   * mutated in place and mirrored into plugin.settings via the
+   * `persistSettings` hook.
+   */
+  lastSessionId: string;
 }
 
 export interface WebviewViewRuntime {
@@ -98,6 +129,15 @@ export interface WebviewViewRuntime {
    * change is visible to the next spawn without re-mounting.
    */
   readonly settings: WebviewMutableSettings;
+  /**
+   * Phase 5a — when `true`, `onOpen()` calls
+   * `controller.start(undefined, settings.lastSessionId)` so the argv
+   * carries `--resume <id>`. The `COMMAND_RESUME_WEBVIEW` command flips
+   * this flag on the next factory invocation; the regular open command
+   * leaves it `false`/`undefined` (fresh session). Read once per
+   * `onOpen()` — a spurious re-open of the same leaf does NOT re-resume.
+   */
+  readonly resumeOnStart?: boolean;
   /**
    * Provider for render-time settings. Called on every dispatch so a toggle
    * applied from the settings panel is observed without remounting the view.
@@ -125,6 +165,9 @@ interface RendererStates {
   readonly userToolResult: UserToolResultRenderState;
   readonly result: ResultRenderState;
   readonly systemInit: SystemInitRenderState;
+  readonly systemStatus: SystemStatusRenderState;
+  readonly systemHook: SystemHookRenderState;
+  readonly compactBoundary: CompactBoundaryRenderState;
 }
 
 export class ClaudeWebviewView extends ItemView {
@@ -135,6 +178,7 @@ export class ClaudeWebviewView extends ItemView {
   private states: RendererStates | null = null;
   private controller: SessionController | null = null;
   private inputBar: InputBar | null = null;
+  private statusBar: StatusBarHandle | null = null;
   /**
    * Injection point for the SessionController runtime. Both production
    * (`wireWebview` in `index.ts`) and tests assign this field before
@@ -198,7 +242,11 @@ export class ClaudeWebviewView extends ItemView {
       userToolResult: createUserToolResultState(),
       result: createResultState(),
       systemInit: createSystemInitState(),
+      systemStatus: createSystemStatusState(),
+      systemHook: createSystemHookState(),
+      compactBoundary: createCompactBoundaryState(),
     };
+    this.statusBar = buildStatusBar(this.layout.headerEl, doc);
 
     const bus = createBus();
     this.bus = bus;
@@ -236,13 +284,47 @@ export class ClaudeWebviewView extends ItemView {
         settings: runtime.settings,
         bus,
         spawnImpl: runtime.spawnImpl,
+        onSessionId: (id) => {
+          runtime.settings.lastSessionId = id;
+          const persist = runtime.persistSettings;
+          if (persist) {
+            try {
+              const r = persist();
+              if (r instanceof Promise) {
+                r.catch((err: unknown) => {
+                  // eslint-disable-next-line no-console
+                  console.error(
+                    "[claude-webview] persistSettings failed after onSessionId:",
+                    err,
+                  );
+                });
+              }
+            } catch (err: unknown) {
+              // eslint-disable-next-line no-console
+              console.error(
+                "[claude-webview] persistSettings threw after onSessionId:",
+                err,
+              );
+            }
+          }
+        },
       });
       this.controller = controller;
       bus.on("ui.send", (e) => {
         if (this.disposed) return;
         controller.send(e.text);
       });
-      controller.start();
+      // Phase 5a — honor the one-shot resume flag that the resume command
+      // set on the runtime. `start()` already validates the UUID shape
+      // (throws on malformed), but we still check for a non-empty string
+      // here so an accidental resume-on-start with empty id quietly
+      // starts a fresh session instead of crashing the view.
+      const resumeId =
+        runtime.resumeOnStart === true &&
+        runtime.settings.lastSessionId.length > 0
+          ? runtime.settings.lastSessionId
+          : undefined;
+      controller.start(undefined, resumeId);
     }
 
     this.inputBar = buildInputBar(this.layout.inputRowEl, bus);
@@ -274,6 +356,11 @@ export class ClaudeWebviewView extends ItemView {
     }
     this.layout = null;
     this.states = null;
+    // HIGH-2 fix — statusBar holds a closure over its badge Map (4
+    // HTMLElement refs). Other handles are nulled here; keep the pattern
+    // consistent so GC can collect the whole graph once the leaf drops
+    // its view reference.
+    this.statusBar = null;
     // eslint-disable-next-line no-console
     console.log("[claude-webview] view unmounted");
   }
@@ -297,6 +384,7 @@ export class ClaudeWebviewView extends ItemView {
     const runtime = this.runtime;
     const renderOptions = runtime?.renderOptions?.();
     const showThinking = renderOptions?.showThinking ?? false;
+    const showDebug = renderOptions?.showDebugSystemEvents ?? false;
     switch (event.type) {
       case "assistant":
         renderAssistantText(states.assistantText, cards, event, doc);
@@ -322,12 +410,34 @@ export class ClaudeWebviewView extends ItemView {
         return;
       case "result":
         renderResult(states.result, cards, event, doc);
-        return;
-      case "system":
-        if (event.subtype === "init") {
-          renderSystemInit(states.systemInit, cards, event, doc);
+        if (this.statusBar) {
+          this.statusBar.update(event);
         }
         return;
+      case "system":
+        switch (event.subtype) {
+          case "init":
+            renderSystemInit(states.systemInit, cards, event, doc);
+            return;
+          case "status":
+            renderSystemStatus(states.systemStatus, layout.headerEl, event, doc);
+            return;
+          case "compact_boundary":
+            renderCompactBoundary(states.compactBoundary, cards, event, doc);
+            return;
+          case "hook_started":
+          case "hook_response":
+            renderSystemHook(states.systemHook, cards, event, doc, { showDebug });
+            return;
+          default: {
+            // Phase 5a review MED-Q1 — exhaustive inner switch so a future
+            // SystemEvent subtype addition breaks this file at compile time
+            // rather than silently no-op'ing at runtime.
+            const _exhaustiveSubtype: never = event;
+            void _exhaustiveSubtype;
+            return;
+          }
+        }
       case "rate_limit_event":
         return;
       case "__unknown__":

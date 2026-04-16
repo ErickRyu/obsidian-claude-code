@@ -1,6 +1,10 @@
 import { spawn as nodeSpawn } from "node:child_process";
-import type { Plugin } from "obsidian";
-import { VIEW_TYPE_CLAUDE_WEBVIEW, COMMAND_OPEN_WEBVIEW } from "../constants";
+import { Notice, type Plugin } from "obsidian";
+import {
+  VIEW_TYPE_CLAUDE_WEBVIEW,
+  COMMAND_OPEN_WEBVIEW,
+  COMMAND_RESUME_WEBVIEW,
+} from "../constants";
 import {
   ClaudeWebviewView,
   type WebviewViewRuntime,
@@ -21,6 +25,8 @@ export interface WebviewPluginHost extends Plugin {
     permissionPreset: PermissionPreset;
     extraArgs: string;
     showThinking: boolean;
+    showDebugSystemEvents: boolean;
+    lastSessionId: string;
   };
   saveSettings(): Promise<void>;
 }
@@ -64,8 +70,17 @@ export function wireWebview(plugin: WebviewPluginHost): void {
     disposeAllSessionControllers();
   });
 
+  // Phase 5a — one-shot resume flag. The resume command flips this to
+  // `true` right before `setViewState` triggers the factory; the factory
+  // consumes and resets it so a later regular-open on the same leaf does
+  // NOT accidentally resume. The flag is per-`wireWebview` closure, so
+  // each plugin instance has its own scope (no global leak).
+  let pendingResumeOnce = false;
+
   plugin.registerView(VIEW_TYPE_CLAUDE_WEBVIEW, (leaf) => {
     const view = new ClaudeWebviewView(leaf);
+    const resumeOnStart = pendingResumeOnce;
+    pendingResumeOnce = false;
     // Shared mutable settings reference. The permission dropdown (Phase 4b)
     // mutates `permissionPreset` on user change and calls `persistSettings`;
     // the next `SessionController.start()` reads the same object via
@@ -79,19 +94,28 @@ export function wireWebview(plugin: WebviewPluginHost): void {
       claudePath: plugin.settings.claudePath,
       permissionPreset: plugin.settings.permissionPreset,
       extraArgs: plugin.settings.extraArgs,
+      lastSessionId: plugin.settings.lastSessionId,
     };
     const runtime: WebviewViewRuntime = {
       spawnImpl: nodeSpawn,
       settings: runtimeSettings,
+      resumeOnStart,
       // `renderOptions` is a closure over `plugin.settings` rather than a
       // snapshot — each dispatch reads the most recent saved value, so a
-      // user toggling "Show Thinking" in the settings panel takes effect on
-      // the next streamed event without recreating the leaf.
+      // user toggling "Show Thinking" or "Show debug system events" in the
+      // settings panel takes effect on the next streamed event without
+      // recreating the leaf.
       renderOptions: () => ({
         showThinking: plugin.settings.showThinking,
+        showDebugSystemEvents: plugin.settings.showDebugSystemEvents,
       }),
       persistSettings: async () => {
         plugin.settings.permissionPreset = runtimeSettings.permissionPreset;
+        // Phase 5a — mirror lastSessionId back to plugin.settings so the
+        // resume command (which reads `plugin.settings.lastSessionId`) and
+        // data.json both reflect whatever the SessionController captured
+        // from the most recent `result` event.
+        plugin.settings.lastSessionId = runtimeSettings.lastSessionId;
         // Refresh the read-only fields from plugin.settings so a user who
         // edited claudePath / extraArgs and then toggled the preset sees
         // the binary-path / extra-args update on the next spawn as well.
@@ -103,6 +127,7 @@ export function wireWebview(plugin: WebviewPluginHost): void {
           claudePath: string;
           extraArgs: string;
           permissionPreset: PermissionPreset;
+          lastSessionId: string;
         };
         mutable.claudePath = plugin.settings.claudePath;
         mutable.extraArgs = plugin.settings.extraArgs;
@@ -129,6 +154,49 @@ export function wireWebview(plugin: WebviewPluginHost): void {
         type: VIEW_TYPE_CLAUDE_WEBVIEW,
         active: true,
       });
+      workspace.revealLeaf(leaf);
+    },
+  });
+
+  // Phase 5a — "Open Claude Webview (resume last)". Uses
+  // `plugin.settings.lastSessionId`, which the session controller writes via
+  // `onSessionId` on every successful turn. When empty, short-circuit with
+  // a Notice so the user understands why nothing happened (no silent no-op).
+  plugin.addCommand({
+    id: COMMAND_RESUME_WEBVIEW,
+    name: "Open Claude Webview (resume last)",
+    callback: async () => {
+      const sid = plugin.settings.lastSessionId;
+      if (!sid || sid.length === 0) {
+        new Notice(
+          "No previous Claude Webview session to resume. Run a session first.",
+        );
+        return;
+      }
+      const workspace = plugin.app.workspace;
+      // Unlike the open command, always spin up a fresh leaf — resuming into
+      // an existing leaf would skip `registerView` factory (and its runtime
+      // seeding with `lastSessionId`). The user's expectation matches a
+      // "new tab pointed at the old session" UX.
+      const leaf = workspace.getRightLeaf(false);
+      if (!leaf) return;
+      // One-shot: the next factory call (triggered by setViewState)
+      // reads+clears this flag, so the view's onOpen knows to call
+      // `controller.start(undefined, settings.lastSessionId)`. A later
+      // open of a different leaf on the same plugin instance does NOT
+      // resume unless this command is invoked again.
+      pendingResumeOnce = true;
+      try {
+        await leaf.setViewState({
+          type: VIEW_TYPE_CLAUDE_WEBVIEW,
+          active: true,
+        });
+      } finally {
+        // Defensive reset — a thrown setViewState must not leave the
+        // flag set for the next spurious factory invocation. The factory
+        // itself also resets on read, so this is belt-and-suspenders.
+        pendingResumeOnce = false;
+      }
       workspace.revealLeaf(leaf);
     },
   });
