@@ -196,6 +196,12 @@ const EXPECTED: ReadonlyArray<FixtureExpectation> = [
   },
   {
     fixture: "todo.jsonl",
+    // Phase 4b: TodoWrite is hoisted by the dedicated todo-panel renderer
+    // and no longer produces an `assistant-tool-use` card — only ToolSearch
+    // remains in the generic path. The phase-2-scoped dispatcher below does
+    // not call the todo-panel renderer, so the todo-summary card is not
+    // counted here; the SH-03 / 4b-4 gate verifies the summary card via
+    // `scripts/render-fixture.ts` on `artifacts/phase-4b/render-todo.json`.
     cardKinds: new Set([
       "system-init",
       "assistant-text",
@@ -206,7 +212,7 @@ const EXPECTED: ReadonlyArray<FixtureExpectation> = [
     cardCountByKind: {
       "system-init": 1,
       "assistant-text": 1,
-      "assistant-tool-use": 2,
+      "assistant-tool-use": 1,
       "user-tool-result": 2,
       result: 1,
     },

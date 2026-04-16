@@ -24,7 +24,7 @@ import type { AssistantEvent, ToolUseBlock } from "../parser/types";
  * message content.
  */
 export interface AssistantToolUseRenderState {
-  cards: Map<string, HTMLElement>;
+  readonly cards: Map<string, HTMLElement>;
 }
 
 export function createAssistantToolUseState(): AssistantToolUseRenderState {
@@ -37,8 +37,12 @@ export function renderAssistantToolUse(
   event: AssistantEvent,
   doc: Document,
 ): HTMLElement[] {
+  // TodoWrite is hoisted by `renderers/todo-panel.ts` into the layout's
+  // side panel + a compact summary card. Emitting the generic JSON preview
+  // here would double-render every TodoWrite call (SH-03 / 4b-4 gate).
   const toolUseBlocks = event.message.content.filter(
-    (block): block is ToolUseBlock => block.type === "tool_use",
+    (block): block is ToolUseBlock =>
+      block.type === "tool_use" && block.name !== "TodoWrite",
   );
   if (toolUseBlocks.length === 0) {
     return [];

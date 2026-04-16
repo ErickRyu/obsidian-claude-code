@@ -10,6 +10,16 @@ export class ItemView {
   getDisplayText() { return ""; }
   getIcon() { return ""; }
   registerEvent(_: any) {}
+  // Obsidian's Component adds the DOM listener and remembers the unbind so
+  // unload / leaf close tears it down. The real API signature is
+  // `(el, type, callback, options?)`. The shim keeps the attach semantics
+  // minimal so happy-dom-driven tests observe the listener while still
+  // exercising the `registerDomEvent` code path in production view code.
+  registerDomEvent(el: any, type: string, handler: (ev: Event) => void): void {
+    if (el && typeof el.addEventListener === "function") {
+      el.addEventListener(type, handler);
+    }
+  }
 }
 
 export class Notice {

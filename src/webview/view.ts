@@ -44,6 +44,16 @@ import {
   renderEditDiff,
   type EditDiffRenderState,
 } from "./renderers/edit-diff";
+import {
+  createTodoPanelState,
+  renderTodoPanel,
+  type TodoPanelRenderState,
+} from "./renderers/todo-panel";
+import {
+  buildPermissionDropdown,
+  type PermissionDropdownSettings,
+} from "./ui/permission-dropdown";
+import type { PermissionPreset } from "./settings-adapter";
 
 /**
  * ClaudeWebviewView — Phase 2 layout + Phase 3 SessionController wiring.
@@ -65,9 +75,29 @@ export interface WebviewRenderOptionsSnapshot {
   readonly showThinking: boolean;
 }
 
+/**
+ * Shared mutable settings view the permission dropdown (Phase 4b) and the
+ * session controller both reference. The dropdown mutates
+ * `permissionPreset` in place on user change; the next `start()` recomputes
+ * `buildSpawnArgs(settings)` so the argv reflects the latest choice. A
+ * single object backs both consumers — `SpawnArgsSettings` is a structural
+ * superset that treats the fields as readonly at the type level only.
+ */
+export interface WebviewMutableSettings extends PermissionDropdownSettings {
+  permissionPreset: PermissionPreset;
+  readonly claudePath: string;
+  readonly extraArgs: string;
+}
+
 export interface WebviewViewRuntime {
   readonly spawnImpl: SpawnImpl;
-  readonly settings: SpawnArgsSettings;
+  /**
+   * Shared settings object used by the session controller (via the
+   * `SpawnArgsSettings` view) and the permission dropdown (via the
+   * `PermissionDropdownSettings` view). A single reference so a dropdown
+   * change is visible to the next spawn without re-mounting.
+   */
+  readonly settings: WebviewMutableSettings;
   /**
    * Provider for render-time settings. Called on every dispatch so a toggle
    * applied from the settings panel is observed without remounting the view.
@@ -77,6 +107,13 @@ export interface WebviewViewRuntime {
    * inside the closure so the most recent saved setting always wins.
    */
   readonly renderOptions?: () => WebviewRenderOptionsSnapshot;
+  /**
+   * Persistence hook the permission dropdown calls after a preset change.
+   * In production this is `() => plugin.saveSettings()`. Optional — test
+   * harnesses may pass `undefined` and rely on the dropdown's settings
+   * mutation for integration assertions.
+   */
+  readonly persistSettings?: () => void | Promise<void>;
 }
 
 interface RendererStates {
@@ -84,6 +121,7 @@ interface RendererStates {
   readonly assistantToolUse: AssistantToolUseRenderState;
   readonly assistantThinking: AssistantThinkingRenderState;
   readonly editDiff: EditDiffRenderState;
+  readonly todoPanel: TodoPanelRenderState;
   readonly userToolResult: UserToolResultRenderState;
   readonly result: ResultRenderState;
   readonly systemInit: SystemInitRenderState;
@@ -97,11 +135,24 @@ export class ClaudeWebviewView extends ItemView {
   private states: RendererStates | null = null;
   private controller: SessionController | null = null;
   private inputBar: InputBar | null = null;
-  // Injection point for the SessionController runtime. Tests set this via
-  // `(view as unknown as {...}).__testHooks = {...}` before onOpen.  The
-  // production `wireWebview` factory sets the same field when creating the
-  // view instance so the onOpen path is identical in both environments.
-  public __testHooks: WebviewViewRuntime | undefined;
+  /**
+   * Injection point for the SessionController runtime. Both production
+   * (`wireWebview` in `index.ts`) and tests assign this field before
+   * `onOpen()` runs; the onOpen path is identical in both environments.
+   * The deprecated `__testHooks` alias is kept in place for Phase 3 tests
+   * that still reach the view via `as unknown as {__testHooks: ...}` and
+   * forwards reads/writes to `runtime` so either name resolves the same
+   * object. Prefer `runtime` in new code.
+   */
+  public runtime: WebviewViewRuntime | undefined;
+
+  /** @deprecated Phase 3 test hook — use `runtime` instead. */
+  public get __testHooks(): WebviewViewRuntime | undefined {
+    return this.runtime;
+  }
+  public set __testHooks(value: WebviewViewRuntime | undefined) {
+    this.runtime = value;
+  }
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -143,6 +194,7 @@ export class ClaudeWebviewView extends ItemView {
       assistantToolUse: createAssistantToolUseState(),
       assistantThinking: createAssistantThinkingState(),
       editDiff: createEditDiffState(),
+      todoPanel: createTodoPanelState(),
       userToolResult: createUserToolResultState(),
       result: createResultState(),
       systemInit: createSystemInitState(),
@@ -160,8 +212,26 @@ export class ClaudeWebviewView extends ItemView {
       this.dispatchStreamEvent(e.event, layout, states, doc);
     });
 
-    const runtime = this.__testHooks;
+    const runtime = this.runtime;
     if (runtime) {
+      // Mount the permission dropdown in the header so a user preset change
+      // mutates `runtime.settings.permissionPreset` in place. The next
+      // `SessionController.start()` picks up the new value via
+      // `buildSpawnArgs(settings)` at call time — MH-09 integration contract.
+      //
+      // `registerDomEvent` binds the change listener through Obsidian's
+      // `Component` lifecycle, so `onClose` / plugin unload tears the
+      // listener down with the view. Without this, the dropdown falls back
+      // to `el.addEventListener` and the listener survives until GC.
+      buildPermissionDropdown(this.layout.headerEl, {
+        settings: runtime.settings,
+        bus,
+        persist: runtime.persistSettings ?? (() => {}),
+        registerDomEvent: (el, type, handler) => {
+          this.registerDomEvent(el, type, handler);
+        },
+      });
+
       const controller = new SessionController({
         settings: runtime.settings,
         bus,
@@ -224,7 +294,7 @@ export class ClaudeWebviewView extends ItemView {
     doc: Document,
   ): void {
     const cards = layout.cardsEl;
-    const runtime = this.__testHooks;
+    const runtime = this.runtime;
     const renderOptions = runtime?.renderOptions?.();
     const showThinking = renderOptions?.showThinking ?? false;
     switch (event.type) {
@@ -239,6 +309,13 @@ export class ClaudeWebviewView extends ItemView {
           { showThinking },
         );
         renderEditDiff(states.editDiff, cards, event, doc);
+        renderTodoPanel(
+          states.todoPanel,
+          cards,
+          layout.todoSideEl,
+          event,
+          doc,
+        );
         return;
       case "user":
         renderUserToolResult(states.userToolResult, cards, event, doc);

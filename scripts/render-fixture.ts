@@ -61,11 +61,30 @@ import {
   createSystemInitState,
   renderSystemInit,
 } from "../src/webview/renderers/system-init";
+import {
+  createTodoPanelState,
+  renderTodoPanel,
+} from "../src/webview/renderers/todo-panel";
 import type { StreamEvent } from "../src/webview/parser/types";
 
 const ROOT = resolve(__dirname, "..");
 const FIXTURE_DIR = join(ROOT, "test", "fixtures", "stream-json");
-const OUT_DIR = join(ROOT, "artifacts", "phase-4a");
+
+/**
+ * Fixture → phase output directory. Keeps the evidence script ownership
+ * single-source so the RALPH_PLAN verification CMDs stay as
+ * `npx tsx scripts/render-fixture.ts <fixture>` without a phase argument.
+ * New fixtures default to `phase-4a` (the original destination) unless
+ * mapped here.
+ */
+const FIXTURE_TO_PHASE: Record<string, string> = {
+  "todo.jsonl": "phase-4b",
+};
+
+function phaseDirFor(fixtureName: string): string {
+  const phase = FIXTURE_TO_PHASE[fixtureName] ?? "phase-4a";
+  return join(ROOT, "artifacts", phase);
+}
 
 interface RenderEvidence {
   generatedBy: string;
@@ -85,6 +104,14 @@ interface RenderEvidence {
   editDiffHasFilePath: boolean;
   diffAddedCount: number;
   diffRemovedCount: number;
+  /** Phase 4b: number of `.claude-wv-todo-item` nodes under todoSideEl. */
+  todoSideItemCount: number;
+  /** Phase 4b: true iff a `.claude-wv-card--todo-summary` replaced the
+   *  TodoWrite tool_use JSON preview instead of the verbose
+   *  `.claude-wv-card--assistant-tool-use` card. */
+  assistantToolUseCardIsSummary: boolean;
+  /** Phase 4b: aggregated textContent of the todo-summary card(s). */
+  assistantToolUseTextIncludes: string;
   assertions: Array<{ id: string; desc: string; actual: number | boolean; pass: boolean }>;
 }
 
@@ -97,6 +124,7 @@ function main(): void {
   }
   const fixtureName = basename(fixtureArg);
   const fixturePath = join(FIXTURE_DIR, fixtureName);
+  const OUT_DIR = phaseDirFor(fixtureName);
 
   mkdirSync(OUT_DIR, { recursive: true });
 
@@ -106,23 +134,27 @@ function main(): void {
   const { document: doc } = new Window();
   const cardsEl = doc.createElement("div");
   cardsEl.classList.add("claude-wv-cards");
+  const todoSideEl = doc.createElement("div");
+  todoSideEl.classList.add("claude-wv-todo-side");
   // Attach via replaceChildren to stay consistent with the
   // renderers/ui/ discipline enforced by the 4a-5 grep gate.  The script
   // directory is outside that gate, but the codebase convention is worth
   // keeping so future audits don't have to special-case scripts/.
-  doc.body.replaceChildren(cardsEl);
+  doc.body.replaceChildren(cardsEl, todoSideEl);
 
   const states = {
     assistantText: createAssistantTextState(),
     assistantToolUse: createAssistantToolUseState(),
     assistantThinking: createAssistantThinkingState(),
     editDiff: createEditDiffState(),
+    todoPanel: createTodoPanelState(),
     userToolResult: createUserToolResultState(),
     result: createResultState(),
     systemInit: createSystemInitState(),
   };
 
   const cardsElAsHtml = cardsEl as unknown as HTMLElement;
+  const todoSideElAsHtml = todoSideEl as unknown as HTMLElement;
   const docAsDoc = doc as unknown as Document;
 
   for (const ev of events) {
@@ -138,6 +170,13 @@ function main(): void {
           { showThinking: false },
         );
         renderEditDiff(states.editDiff, cardsElAsHtml, ev, docAsDoc);
+        renderTodoPanel(
+          states.todoPanel,
+          cardsElAsHtml,
+          todoSideElAsHtml,
+          ev,
+          docAsDoc,
+        );
         break;
       case "user":
         renderUserToolResult(states.userToolResult, cardsElAsHtml, ev, docAsDoc);
@@ -191,6 +230,35 @@ function main(): void {
     el.classList.contains("claude-wv-card--assistant-thinking"),
   ).length;
 
+  // Phase 4b: TodoWrite hoist metrics. `todoSideItemCount` counts every
+  // rendered todo under the side panel; `assistantToolUseCardIsSummary`
+  // is true iff a TodoWrite block produced a compact `--todo-summary`
+  // card AND the verbose `--assistant-tool-use` card was NOT emitted for
+  // the same tool_use.id.
+  const todoSideItemCount = todoSideEl.querySelectorAll(
+    ".claude-wv-todo-item",
+  ).length;
+  const todoSummaryCards = cardEls.filter((el) =>
+    el.classList.contains("claude-wv-card--todo-summary"),
+  );
+  const assistantToolUseTextIncludes = todoSummaryCards
+    .map((el) => (el.textContent ?? "").trim())
+    .join(" | ");
+  const summaryIds = new Set(
+    todoSummaryCards
+      .map((el) => el.getAttribute("data-tool-use-id"))
+      .filter((s): s is string => typeof s === "string"),
+  );
+  const genericToolUseIdsForTodoWrite = cardEls
+    .filter((el) => el.classList.contains("claude-wv-card--assistant-tool-use"))
+    .filter((el) => el.getAttribute("data-tool-name") === "TodoWrite")
+    .map((el) => el.getAttribute("data-tool-use-id"))
+    .filter((s): s is string => typeof s === "string");
+  const assistantToolUseCardIsSummary =
+    todoSummaryCards.length > 0 &&
+    genericToolUseIdsForTodoWrite.length === 0 &&
+    summaryIds.size > 0;
+
   const assertions: RenderEvidence["assertions"] = [];
   if (fixtureName === "edit.jsonl") {
     assertions.push({
@@ -214,6 +282,15 @@ function main(): void {
       pass: thinkingCardCount >= 1,
     });
   }
+  if (fixtureName === "todo.jsonl") {
+    const summaryPass = assistantToolUseTextIncludes.includes("todos updated");
+    assertions.push({
+      id: "SH-03",
+      desc: "TodoWrite hoist: side panel has >=1 item, generic assistant-tool-use JSON preview is suppressed, and the summary card textContent contains 'todos updated'",
+      actual: todoSideItemCount,
+      pass: todoSideItemCount > 0 && assistantToolUseCardIsSummary && summaryPass,
+    });
+  }
 
   const evidence: RenderEvidence = {
     generatedBy: "scripts/render-fixture.ts",
@@ -233,6 +310,9 @@ function main(): void {
     editDiffHasFilePath,
     diffAddedCount,
     diffRemovedCount,
+    todoSideItemCount,
+    assistantToolUseCardIsSummary,
+    assistantToolUseTextIncludes,
     assertions,
   };
 
@@ -243,7 +323,8 @@ function main(): void {
   // eslint-disable-next-line no-console
   console.log(
     `[render-fixture] wrote ${outFile} — cards=${evidence.cardCount} ` +
-      `add=${diffAddedCount} remove=${diffRemovedCount} thinking=${thinkingCardCount}`,
+      `add=${diffAddedCount} remove=${diffRemovedCount} thinking=${thinkingCardCount} ` +
+      `todoItems=${todoSideItemCount} summary=${assistantToolUseCardIsSummary}`,
   );
 
   // Also write the cardsEl.outerHTML for debugging + manual inspection.
