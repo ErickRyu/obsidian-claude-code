@@ -163,7 +163,15 @@ artifact로 올리기**.
 웹뷰 없이는 그 뒤 모든 차별화가 못 올라감. 이 릴리즈는 "기능 추가"가 아니라
 **인프라 치환**.
 
-### [ ] Custom webview with stream-json parsing
+### [x] Custom webview with stream-json parsing — **v0.6.0-beta.1 LANDED (2026-04-17)**
+
+Delivered in `feat/webview-v0.6.0`. See `docs/WEBVIEW_FOUNDATION_COMPLETE.md`
+for the 7-criterion completion audit; all 11 must-have + 7 should-have
+assertions pass in `artifacts/phase-6/completion-matrix.json`. The
+`V0.6.0_WEBVIEW_FOUNDATION_COMPLETE` marker at the repo root was emitted
+by `scripts/completion-gate.ts` after user signoff of
+`docs/manual-smoke-checklist.md` and a green `claude -p` smoke run
+(`artifacts/phase-5b/smoke-claude-p.verdict: SMOKE_OK`, version 2.1.111).
 
 **What:** xterm.js를 대체(또는 옵션으로 공존)하는 커스텀 Obsidian 뷰. Claude Code를
 `claude -p --output-format=stream-json --input-format=stream-json`로 실행해서

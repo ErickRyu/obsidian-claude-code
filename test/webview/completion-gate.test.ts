@@ -1,0 +1,210 @@
+import { describe, it, expect } from "vitest";
+import { readFileSync, existsSync } from "node:fs";
+import path from "node:path";
+
+const ROOT = path.resolve(__dirname, "..", "..");
+const MATRIX = path.join(ROOT, "artifacts", "phase-6", "completion-matrix.json");
+const MARKER = path.join(ROOT, "V0.6.0_WEBVIEW_FOUNDATION_COMPLETE");
+
+// Max age (ms) the completion-matrix.json is allowed to be when these
+// contract tests run.  Set to 24h so a fresh gate run during a Ralph
+// iteration is accepted, but stale artifacts (e.g. committed months ago)
+// are rejected — mitigating the "Ralph hand-edits the matrix" vector.
+const MAX_MATRIX_AGE_MS = 24 * 60 * 60 * 1000;
+
+interface Assertion {
+  id: string;
+  desc: string;
+  actual: number | boolean | string;
+  pass: boolean;
+  evidencePath?: string;
+}
+
+// Must mirror scripts/completion-gate.ts exactly (no field omissions) —
+// the shape is the write-side contract and any drift here is a real
+// regression the test is supposed to catch.
+interface ExternalGates {
+  smokeVerdict: string;
+  smokeAccepted: boolean;
+  smokeSkipSignoffPresent: boolean;
+  smokeSkipCommitAuthorEmail: string;
+  manualChecklistPlaceholderCount: number;
+  manualChecklistCheckedCount: number;
+  manualChecklistLastAuthorEmail: string;
+  manualChecklistSignoffVerified: boolean;
+  phaseTagsPresent: number;
+  regressionTestFiles: number;
+  regressionTestCases: number;
+  safeExecErrors: string[];
+}
+
+interface CompletionMatrix {
+  generatedBy: string;
+  generatedAt: string;
+  subprocessPid: number;
+  subprocessExitCode: number;
+  parserInvocationCount: number;
+  fixtures: Array<{ fixture: string; renderSucceeded: boolean }>;
+  assertions: Assertion[];
+  externalGates: ExternalGates;
+  userSignoffVerified: boolean;
+  mustHaveAllPass: boolean;
+  shouldHaveAllPass: boolean;
+  markerEmitted: boolean;
+}
+
+function readMatrix(): CompletionMatrix {
+  expect(existsSync(MATRIX)).toBe(true);
+  const raw = readFileSync(MATRIX, "utf8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `completion-matrix.json failed to parse: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  // Minimal runtime shape guard before casting — surfaces bad writes with
+  // a readable error instead of a confusing TypeError downstream.
+  expect(typeof parsed).toBe("object");
+  expect(parsed).not.toBeNull();
+  const obj = parsed as Record<string, unknown>;
+  for (const key of [
+    "generatedBy",
+    "generatedAt",
+    "fixtures",
+    "assertions",
+    "externalGates",
+    "mustHaveAllPass",
+    "shouldHaveAllPass",
+    "markerEmitted",
+  ]) {
+    expect(key in obj, `completion-matrix missing '${key}'`).toBe(true);
+  }
+  // Deep-check externalGates so a new field added on the write side
+  // without a test update is caught at contract time, not discovered
+  // months later when a missing gate allows a broken release through.
+  const gates = obj["externalGates"];
+  expect(typeof gates, "externalGates must be an object").toBe("object");
+  expect(gates).not.toBeNull();
+  const gateObj = gates as Record<string, unknown>;
+  for (const key of [
+    "smokeVerdict",
+    "smokeAccepted",
+    "smokeSkipSignoffPresent",
+    "smokeSkipCommitAuthorEmail",
+    "manualChecklistPlaceholderCount",
+    "manualChecklistCheckedCount",
+    "manualChecklistLastAuthorEmail",
+    "manualChecklistSignoffVerified",
+    "phaseTagsPresent",
+    "regressionTestFiles",
+    "regressionTestCases",
+    "safeExecErrors",
+  ]) {
+    expect(key in gateObj, `externalGates missing '${key}'`).toBe(true);
+  }
+  return parsed as CompletionMatrix;
+}
+
+describe("Phase 6 completion gate", () => {
+  it("completion-matrix.json exists and was produced by scripts/completion-gate.ts", () => {
+    const matrix = readMatrix();
+    expect(matrix.generatedBy).toBe("scripts/completion-gate.ts");
+    expect(matrix.fixtures.length).toBe(8);
+    expect(matrix.fixtures.every((f) => f.renderSucceeded)).toBe(true);
+  });
+
+  it("completion-matrix.json is fresh (generatedAt within the last 24h)", () => {
+    const matrix = readMatrix();
+    const gen = Date.parse(matrix.generatedAt);
+    expect(Number.isNaN(gen), `generatedAt unparseable: ${matrix.generatedAt}`).toBe(false);
+    const age = Date.now() - gen;
+    expect(
+      age,
+      `completion-matrix.json is stale (age ${Math.round(age / 1000)}s > ${MAX_MATRIX_AGE_MS / 1000}s). Run \`npx tsx scripts/completion-gate.ts\` to regenerate.`,
+    ).toBeLessThan(MAX_MATRIX_AGE_MS);
+    // A freshly-generated matrix cannot be from the future.
+    expect(age).toBeGreaterThanOrEqual(-60_000);
+  });
+
+  it("contains exactly 11 must-have and 7 should-have assertions, all pass:true", () => {
+    const matrix = readMatrix();
+    const mh = matrix.assertions.filter((a) => a.id.startsWith("MH-"));
+    const sh = matrix.assertions.filter((a) => a.id.startsWith("SH-"));
+    expect(mh.length).toBe(11);
+    expect(sh.length).toBe(7);
+    const mhFails = mh.filter((a) => !a.pass).map((a) => a.id);
+    const shFails = sh.filter((a) => !a.pass).map((a) => a.id);
+    expect(mhFails).toEqual([]);
+    expect(shFails).toEqual([]);
+    expect(matrix.mustHaveAllPass).toBe(true);
+    expect(matrix.shouldHaveAllPass).toBe(true);
+  });
+
+  it("assertion IDs cover MH-01..MH-11 and SH-01..SH-07 exactly", () => {
+    const matrix = readMatrix();
+    const ids = new Set(matrix.assertions.map((a) => a.id));
+    for (let i = 1; i <= 11; i++) {
+      const id = `MH-${String(i).padStart(2, "0")}`;
+      expect(ids.has(id), `missing ${id}`).toBe(true);
+    }
+    for (let i = 1; i <= 7; i++) {
+      const id = `SH-${String(i).padStart(2, "0")}`;
+      expect(ids.has(id), `missing ${id}`).toBe(true);
+    }
+  });
+
+  it("external gates accept the Phase 5b smoke verdict and checklist signoff", () => {
+    const matrix = readMatrix();
+    const gates = matrix.externalGates;
+    expect(gates.smokeAccepted).toBe(true);
+    expect(["SMOKE_OK", "SKIP_USER_APPROVED"]).toContain(gates.smokeVerdict);
+    if (gates.smokeVerdict === "SKIP_USER_APPROVED") {
+      expect(gates.smokeSkipSignoffPresent).toBe(true);
+      expect(gates.smokeSkipCommitAuthorEmail).toBe("rkggmdii@gmail.com");
+    }
+    expect(gates.manualChecklistPlaceholderCount).toBe(0);
+    expect(gates.manualChecklistCheckedCount).toBeGreaterThanOrEqual(10);
+    expect(gates.manualChecklistLastAuthorEmail).toBe("rkggmdii@gmail.com");
+    expect(gates.manualChecklistSignoffVerified).toBe(true);
+    expect(matrix.userSignoffVerified).toBe(true);
+    expect(gates.phaseTagsPresent).toBeGreaterThanOrEqual(8);
+    // Every safeExec call inside the gate must have returned real data
+    // (no git/npm missing), otherwise regression counts + author checks
+    // would silently be zero.
+    expect(gates.safeExecErrors).toEqual([]);
+    expect(gates.regressionTestFiles).toBeGreaterThan(0);
+    expect(gates.regressionTestCases).toBeGreaterThan(0);
+  });
+
+  it("writes V0.6.0_WEBVIEW_FOUNDATION_COMPLETE marker when all gates pass", () => {
+    const matrix = readMatrix();
+    expect(matrix.markerEmitted).toBe(true);
+    expect(existsSync(MARKER)).toBe(true);
+    const marker = readFileSync(MARKER, "utf8");
+    expect(marker.startsWith("V0.6.0_WEBVIEW_FOUNDATION_COMPLETE")).toBe(true);
+    expect(/smoke_verdict:\s+(SMOKE_OK|SKIP_USER_APPROVED)/.test(marker)).toBe(true);
+    expect(marker).toContain("user_signoff_verified: true");
+    expect(marker).toContain("must_have_all_pass: true");
+    expect(marker).toContain("should_have_all_pass: true");
+    // Marker references the matrix it was generated alongside.
+    expect(marker).toContain("completion_matrix: artifacts/phase-6/completion-matrix.json");
+    expect(marker).toContain(`generated_at: ${matrix.generatedAt}`);
+  });
+
+  it("every assertion carries an evidencePath referring to a real repo file", () => {
+    const matrix = readMatrix();
+    for (const a of matrix.assertions) {
+      expect(a.evidencePath, `${a.id} missing evidencePath`).toBeTruthy();
+      // evidencePath may list two paths separated by " + " (e.g. MH-08).
+      const paths = (a.evidencePath ?? "").split(" + ");
+      for (const p of paths) {
+        expect(
+          existsSync(path.join(ROOT, p.trim())),
+          `${a.id} evidencePath missing: ${p}`,
+        ).toBe(true);
+      }
+    }
+  });
+});
