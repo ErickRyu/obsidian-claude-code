@@ -84,9 +84,9 @@ export interface SpawnArgsSettings {
 export interface SpawnArgsOptions {
   /**
    * When set, `--resume <resumeId>` is appended.  Empty string is treated
-   * the same as `undefined` (no resume).  The caller is responsible for
-   * validating the id shape (UUID) — this module does not reject
-   * malformed ids since the CLI itself has the final say.
+   * the same as `undefined` (no resume).  `buildSpawnArgs` validates the
+   * UUID shape (8-4-4-4-12 hex) via `UUID_RE` and throws on malformed
+   * input — defense-in-depth against settings-file tampering.
    */
   readonly resumeId?: string;
   /**
@@ -181,13 +181,48 @@ function resolveEffectiveConfig(
 }
 
 /**
- * Split the free-form `extraArgs` field on ASCII whitespace, filtering
- * empties.  Deliberately simple — no quote parsing.  Empty / whitespace-only
- * input returns `[]`.
+ * Tokens a user may NOT include in `extraArgs` — they would subvert the
+ * preset-driven permission flags that precede them in argv.  `claude -p`
+ * honors the last occurrence per flag, so allowing the user to append
+ * `--permission-mode bypassPermissions` in extraArgs would silently
+ * escalate Safe → Full.  Matching is case-sensitive on the exact flag
+ * token; values that follow (e.g. `bypassPermissions`) are allowed so
+ * a lone word like `verbose` still works.
  */
-function splitExtraArgs(raw: string): string[] {
+const FORBIDDEN_EXTRA_ARG_FLAGS: ReadonlySet<string> = new Set([
+  "--permission-mode",
+  "--allowedTools",
+  "--allowed-tools",
+  "--mcp-config",
+  "--resume",
+  "--dangerously-skip-permissions",
+]);
+
+/**
+ * UUID pattern `claude -p` emits via `system.init.session_id`.  Format is
+ * the canonical lowercase 8-4-4-4-12 hex; we accept either case so a
+ * user's clipboard copy-paste of an uppercase value still resumes.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Split the free-form `extraArgs` field on ASCII whitespace and reject any
+ * token that matches `FORBIDDEN_EXTRA_ARG_FLAGS`.  This is the
+ * defense-in-depth gate for the preset → argv contract: a value the user
+ * typed in settings cannot relocate `--permission-mode` or `--allowedTools`
+ * to a later argv position that the CLI's last-wins parsing would honor.
+ */
+function splitExtraArgsValidated(raw: string): string[] {
   if (!raw || raw.trim().length === 0) return [];
-  return raw.trim().split(/\s+/).filter((s) => s.length > 0);
+  const tokens = raw.trim().split(/\s+/).filter((s) => s.length > 0);
+  for (const t of tokens) {
+    if (FORBIDDEN_EXTRA_ARG_FLAGS.has(t)) {
+      throw new Error(
+        `[claude-webview] extraArgs rejected: "${t}" may only be set via permission preset / structured options, not via the free-form Extra CLI arguments field.`,
+      );
+    }
+  }
+  return tokens;
 }
 
 /**
@@ -223,19 +258,37 @@ export function buildSpawnArgs(
   // every tool" — same as --permission-mode=default.
   args.push("--allowedTools", resolved.effectiveAllowedTools.join(","));
 
-  // --mcp-config <path> (optional)
+  // --mcp-config <path> (optional).  Defense-in-depth: must be absolute so a
+  // working-directory-relative path cannot resolve into an unexpected vault
+  // location.  The caller (view.ts) is responsible for resolving the value
+  // against the plugin's data dir before passing it in.
   if (options.mcpConfigPath && options.mcpConfigPath.length > 0) {
+    if (!options.mcpConfigPath.startsWith("/")) {
+      throw new Error(
+        `[claude-webview] mcpConfigPath must be absolute (received "${options.mcpConfigPath}").`,
+      );
+    }
     args.push("--mcp-config", options.mcpConfigPath);
   }
 
-  // --resume <id> (optional; empty string treated as absent)
+  // --resume <id> (optional; empty string treated as absent).  Validate the
+  // UUID shape before it reaches argv — argv-array spawn prevents shell
+  // injection, but rejecting malformed ids early surfaces user errors in
+  // the webview instead of as an opaque CLI failure.
   if (options.resumeId && options.resumeId.length > 0) {
+    if (!UUID_RE.test(options.resumeId)) {
+      throw new Error(
+        `[claude-webview] resumeId must be a UUID (received "${options.resumeId}").`,
+      );
+    }
     args.push("--resume", options.resumeId);
   }
 
   // ...extraArgs (free-form user input, last so user can override anything
   // earlier in argv — claude -p honors the last occurrence per flag).
-  const extras = splitExtraArgs(settings.extraArgs);
+  // Validated against FORBIDDEN_EXTRA_ARG_FLAGS to prevent a user from
+  // escalating Safe → Full via `--permission-mode bypassPermissions`.
+  const extras = splitExtraArgsValidated(settings.extraArgs);
   if (extras.length > 0) args.push(...extras);
 
   return {

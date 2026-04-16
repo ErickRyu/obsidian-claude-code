@@ -145,6 +145,43 @@ describe("spawn-args — preset → CLI flag integration (Sub-AC 2 of AC 11)", (
     });
   });
 
+  describe("resume flag — UUID validation (Phase 3 post-review SR-2)", () => {
+    it("rejects a malformed resumeId (non-UUID) with [claude-webview] namespace", () => {
+      expect(() =>
+        buildSpawnArgs(fxSettings("standard"), { resumeId: "not-a-uuid" }),
+      ).toThrow(/\[claude-webview\].*resumeId must be a UUID/);
+    });
+
+    it("rejects a resumeId missing hyphens", () => {
+      expect(() =>
+        buildSpawnArgs(fxSettings("standard"), {
+          resumeId: "d70751ee151b4b5bb5c4957c02505dc6",
+        }),
+      ).toThrow(/resumeId must be a UUID/);
+    });
+  });
+
+  describe("mcpConfigPath — absolute-path validation (Phase 3 post-review SR-3)", () => {
+    it("rejects a relative mcpConfigPath", () => {
+      expect(() =>
+        buildSpawnArgs(fxSettings("standard"), { mcpConfigPath: "mcp.json" }),
+      ).toThrow(/mcpConfigPath must be absolute/);
+    });
+
+    it("rejects a ./-prefixed mcpConfigPath", () => {
+      expect(() =>
+        buildSpawnArgs(fxSettings("standard"), { mcpConfigPath: "./mcp.json" }),
+      ).toThrow(/mcpConfigPath must be absolute/);
+    });
+
+    it("accepts an absolute mcpConfigPath", () => {
+      const { args } = buildSpawnArgs(fxSettings("standard"), {
+        mcpConfigPath: "/vault/.obsidian/plugins/obsidian-claude-code/mcp.json",
+      });
+      expect(args).toContain("--mcp-config");
+    });
+  });
+
   describe("resume flag — conditional on non-empty resumeId", () => {
     it("no --resume flag when options is omitted", () => {
       const { args } = buildSpawnArgs(fxSettings("standard"));
@@ -259,6 +296,26 @@ describe("spawn-args — preset → CLI flag integration (Sub-AC 2 of AC 11)", (
       expect(extraIdx).toBeGreaterThan(permModeIdx);
       expect(extraIdx).toBeGreaterThan(allowedToolsIdx);
     });
+
+    // Phase 3 post-review SR-1 anchor: preset escalation via extraArgs must
+    // throw, not silently win via `--permission-mode`'s last-occurrence rule.
+    it("rejects --permission-mode in extraArgs (Safe→Full escalation defense)", () => {
+      expect(() =>
+        buildSpawnArgs(fxSettings("safe", "--permission-mode bypassPermissions")),
+      ).toThrow(/extraArgs rejected.*permission-mode/);
+    });
+
+    it("rejects --allowedTools in extraArgs", () => {
+      expect(() =>
+        buildSpawnArgs(fxSettings("safe", "--allowedTools Bash")),
+      ).toThrow(/extraArgs rejected.*allowedTools/);
+    });
+
+    it("rejects --dangerously-skip-permissions in extraArgs", () => {
+      expect(() =>
+        buildSpawnArgs(fxSettings("safe", "--dangerously-skip-permissions")),
+      ).toThrow(/extraArgs rejected.*dangerously-skip-permissions/);
+    });
   });
 
   describe("error-surface discipline — unknown preset label", () => {
@@ -277,11 +334,11 @@ describe("spawn-args — preset → CLI flag integration (Sub-AC 2 of AC 11)", (
   describe("deterministic argv ordering (snapshot-free)", () => {
     it("two calls with the same inputs produce identical argv arrays (pure function)", () => {
       const a = buildSpawnArgs(fxSettings("standard"), {
-        resumeId: "abc-123",
+        resumeId: "d70751ee-151b-4b5b-b5c4-957c02505dc6",
         mcpConfigPath: "/x.json",
       });
       const b = buildSpawnArgs(fxSettings("standard"), {
-        resumeId: "abc-123",
+        resumeId: "d70751ee-151b-4b5b-b5c4-957c02505dc6",
         mcpConfigPath: "/x.json",
       });
       expect(a.args).toEqual(b.args);
@@ -290,7 +347,7 @@ describe("spawn-args — preset → CLI flag integration (Sub-AC 2 of AC 11)", (
 
     it("permission flags come BEFORE optional flags (--resume / --mcp-config)", () => {
       const { args } = buildSpawnArgs(fxSettings("standard"), {
-        resumeId: "id-1",
+        resumeId: "d70751ee-151b-4b5b-b5c4-957c02505dc6",
         mcpConfigPath: "/cfg.json",
       });
       const permIdx = args.indexOf("--permission-mode");

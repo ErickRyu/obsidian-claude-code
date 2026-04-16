@@ -2,6 +2,12 @@ import { ItemView, WorkspaceLeaf } from "obsidian";
 import { VIEW_TYPE_CLAUDE_WEBVIEW } from "../constants";
 import { buildLayout, type WebviewLayout } from "./ui/layout";
 import { createBus, type Bus } from "./event-bus";
+import { buildInputBar, type InputBar } from "./ui/input-bar";
+import {
+  SessionController,
+  type SpawnImpl,
+} from "./session/session-controller";
+import type { SpawnArgsSettings } from "./session/spawn-args";
 import type { StreamEvent } from "./parser/types";
 import {
   createAssistantTextState,
@@ -30,29 +36,25 @@ import {
 } from "./renderers/system-init";
 
 /**
- * ClaudeWebviewView — Phase 2 layout wiring + MH-11 lifecycle guard.
+ * ClaudeWebviewView — Phase 2 layout + Phase 3 SessionController wiring.
  *
  * Responsibilities:
- *   1. On `onOpen`, build the `buildLayout` skeleton, create a bus, and
- *      subscribe a dispatcher that fans stream events out to the five
- *      Phase 2 renderer states (assistant.text / tool_use, user
- *      tool_result, result, system.init).
- *   2. On `onClose`, flip `disposed = true`, call `bus.dispose()`, and
- *      drop held references so detached-DOM mutation can't re-enter.
+ *   1. `onOpen`: build the layout, create a bus, instantiate the
+ *      SessionController via the injected runtime (test harness or
+ *      production wireWebview), start it, and attach the input-bar.
+ *   2. `onClose`: flip `disposed = true`, dispose the controller
+ *      (which removes every child-process listener and SIGTERMs the
+ *      child), dispose the input-bar, dispose the bus.
  *   3. Gate every dispatch through the MH-11 double-guard:
  *      `if (this.disposed || this.leaf.view !== this) return`.
- *      Protects against the Obsidian lifecycle race where `detach()`
- *      wins over `onClose()` and a late-arriving event would otherwise
- *      mutate a detached subtree.
  *
- * Phase 3 (`SessionController`) will attach `child.stdout` ->
- * `parseLine` -> `bus.emit({kind:'stream.event', ...})` so the wiring
- * below receives real events. Until then the bus is idle — the
- * contract tested here is purely lifecycle + dispatch safety.
- *
- * Namespace log prefix: `[claude-webview]` (distinct from
- * `[claude-terminal]`).
+ * Namespace log prefix: `[claude-webview]`.
  */
+
+export interface WebviewViewRuntime {
+  readonly spawnImpl: SpawnImpl;
+  readonly settings: SpawnArgsSettings;
+}
 
 interface RendererStates {
   readonly assistantText: AssistantTextRenderState;
@@ -64,9 +66,17 @@ interface RendererStates {
 
 export class ClaudeWebviewView extends ItemView {
   private disposed = true;
+  private closed = false;
   private bus: Bus | null = null;
   private layout: WebviewLayout | null = null;
   private states: RendererStates | null = null;
+  private controller: SessionController | null = null;
+  private inputBar: InputBar | null = null;
+  // Injection point for the SessionController runtime. Tests set this via
+  // `(view as unknown as {...}).__testHooks = {...}` before onOpen.  The
+  // production `wireWebview` factory sets the same field when creating the
+  // view instance so the onOpen path is identical in both environments.
+  public __testHooks: WebviewViewRuntime | undefined;
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -86,13 +96,11 @@ export class ClaudeWebviewView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.disposed = false;
+    this.closed = false;
     // eslint-disable-next-line no-console
     console.log("[claude-webview] view mounted");
     const root = this.resolveRoot();
     if (!root) {
-      // Test mocks supply a stub containerEl without a real HTMLElement at
-      // children[1]; skip layout wiring in that environment — the lifecycle
-      // guard below still gets exercised by the disposed flag assertions.
       this.bus = createBus();
       return;
     }
@@ -102,7 +110,6 @@ export class ClaudeWebviewView extends ItemView {
       throw new Error("[claude-webview] onOpen: root has no ownerDocument");
     }
 
-    // Clear any stale Phase 0 placeholder children.
     root.replaceChildren();
 
     this.layout = buildLayout(root);
@@ -125,10 +132,45 @@ export class ClaudeWebviewView extends ItemView {
       if (!layout || !states) return;
       this.dispatchStreamEvent(e.event, layout, states, doc);
     });
+
+    const runtime = this.__testHooks;
+    if (runtime) {
+      const controller = new SessionController({
+        settings: runtime.settings,
+        bus,
+        spawnImpl: runtime.spawnImpl,
+      });
+      this.controller = controller;
+      bus.on("ui.send", (e) => {
+        if (this.disposed) return;
+        controller.send(e.text);
+      });
+      controller.start();
+    }
+
+    this.inputBar = buildInputBar(this.layout.inputRowEl, bus);
   }
 
   async onClose(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
     this.disposed = true;
+    if (this.controller) {
+      try {
+        this.controller.dispose();
+      } catch {
+        // Continue — dispose must not throw out of onClose.
+      }
+      this.controller = null;
+    }
+    if (this.inputBar) {
+      try {
+        this.inputBar.dispose();
+      } catch {
+        // Continue.
+      }
+      this.inputBar = null;
+    }
     if (this.bus) {
       this.bus.dispose();
       this.bus = null;
@@ -170,20 +212,12 @@ export class ClaudeWebviewView extends ItemView {
         if (event.subtype === "init") {
           renderSystemInit(states.systemInit, cards, event, doc);
         }
-        // Phase 5a adds hook_started / hook_response / status / compact_boundary
-        // subtypes; Phase 2 intentionally no-ops on them.
         return;
       case "rate_limit_event":
-        // Phase 5a surfaces rate-limit banners in the status bar; Phase 2
-        // has no status bar yet so this is an intentional no-op.
         return;
       case "__unknown__":
-        // Debug-mode unknown-card fallback arrives in Phase 4a via card-registry;
-        // Phase 2 intentionally no-ops to stay within the allowlist surface.
         return;
       default: {
-        // Exhaustiveness guard — adding a new StreamEvent union member without
-        // a case arm fails the build. The `never` assertion guarantees this.
         const _exhaustive: never = event;
         void _exhaustive;
         return;

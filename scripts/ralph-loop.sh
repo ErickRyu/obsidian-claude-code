@@ -96,12 +96,20 @@ for i in $(seq 1 "$MAX"); do
 
   cat "$SUMMARY"
 
-  # Completion 감지
-  if grep -q "$COMPLETION_PHRASE" "$LOG"; then
+  # Completion 감지 — 두 조건 동시 충족만 인정
+  # (1) <promise>V0.6.0_WEBVIEW_FOUNDATION_COMPLETE</promise> 태그가 result text 에 존재
+  # (2) 루트에 V0.6.0_WEBVIEW_FOUNDATION_COMPLETE 마커 파일 실존
+  PROMISE_RE="<promise>${COMPLETION_PHRASE}</promise>"
+  if grep -qE "$PROMISE_RE" "$LOG" && [[ -f "$REPO_ROOT/$COMPLETION_PHRASE" ]]; then
     echo ""
     echo "[ralph] 🎉 COMPLETION — $COMPLETION_PHRASE"
     echo "[ralph] final log: $LOG"
+    echo "[ralph] marker:    $REPO_ROOT/$COMPLETION_PHRASE"
     exit 0
+  fi
+  # 거짓 트리거 진단
+  if grep -qE "$PROMISE_RE" "$LOG" && [[ ! -f "$REPO_ROOT/$COMPLETION_PHRASE" ]]; then
+    echo "[ralph] WARN — promise 태그 발견했지만 marker 파일 없음. 거짓 promise 가능. 다음 iteration 계속."
   fi
 
   # 비정상 종료 감지
