@@ -2,6 +2,11 @@
 
 All notable changes to obsidian-claude-code will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Bare `obsidian://open?...` URLs now render as short clickable labels.** When Claude ignores the system-prompt instruction and emits the raw URL without the `[text](url)` wrapper, `ObsidianLinkTransform` detects it and wraps it in an OSC 8 hyperlink using the basename from the `path` query parameter as the visible text. Partial URLs split across PTY chunks are buffered and re-joined, with structural-boundary heuristics (`=`, `&`, `?`, `/`, half-written `%XX`) triggering the hold. An already-wrapped URL inside an OSC 8 sequence is protected from re-matching by a `(?<!\x1b\]8;;)` lookbehind.
+
 ## [0.5.1] - 2026-04-15
 
 ### Added
