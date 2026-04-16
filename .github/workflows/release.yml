@@ -3,7 +3,7 @@ name: Release Obsidian plugin
 on:
   push:
     tags:
-      - "*"
+      - "v*"
 
 jobs:
   build:
@@ -18,10 +18,35 @@ jobs:
         with:
           node-version: "20.x"
 
+      - name: Verify tag matches manifest.json version
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          tag_version="${tag#v}"
+          manifest_version=$(node -p "require('./manifest.json').version")
+          if [ "$tag_version" != "$manifest_version" ]; then
+            echo "::error::Tag $tag (version $tag_version) does not match manifest.json version $manifest_version"
+            exit 1
+          fi
+
       - name: Build plugin
         run: |
           npm install --ignore-scripts
           npm run build
+
+      - name: Extract CHANGELOG section for this version
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          tag_version="${tag#v}"
+          # Grab the block between `## [<version>]` and the next `## ` heading.
+          awk -v ver="$tag_version" '
+            $0 ~ "^## \\[" ver "\\]" { flag=1; next }
+            flag && /^## / { exit }
+            flag { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No CHANGELOG section for $tag_version — falling back to the tag name." >&2
+            echo "Release $tag" > release-notes.md
+          fi
 
       - name: Create release
         env:
@@ -30,6 +55,7 @@ jobs:
           tag="${GITHUB_REF#refs/tags/}"
           gh release create "$tag" \
             --title="$tag" \
+            --notes-file release-notes.md \
             --draft \
             main.js manifest.json styles.css
 
