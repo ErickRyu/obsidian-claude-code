@@ -2,7 +2,9 @@
 
 All notable changes to obsidian-claude-code will be documented in this file.
 
-## [Unreleased]
+## [0.5.2] - 2026-04-16
+
+Track A v0.5.x terminal-mode maintenance bundle — critical UX regressions fixed, measurement infrastructure added, release automation tightened. No new features; the xterm.js path stays on life support until the v0.6.0 webview lands.
 
 ### Added
 - **URL emission compliance counters.** Three in-memory, session-scoped counters (`linkMarkdownEmitted`, `linkBareUrlEmitted`, `vaultPathMentioned`) track how often Claude follows the system-prompt instruction to emit `[text](obsidian://open?...)` vs a raw URL vs a plain vault path. Values are logged to the developer console on plugin unload and never persisted; `vaultPathMentioned` is deduped per `(line, start, text)` so hover and repaint do not inflate the count, and only paths that actually resolve to a vault note are included. Used to decide in a ~2-week dogfood window whether the system-prompt approach is reliable enough or whether we need a stronger fallback.
