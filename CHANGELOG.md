@@ -4,6 +4,9 @@ All notable changes to obsidian-claude-code will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **URL emission compliance counters.** Three in-memory, session-scoped counters (`linkMarkdownEmitted`, `linkBareUrlEmitted`, `vaultPathMentioned`) track how often Claude follows the system-prompt instruction to emit `[text](obsidian://open?...)` vs a raw URL vs a plain vault path. Values are logged to the developer console on plugin unload and never persisted; `vaultPathMentioned` is deduped per `(line, start, text)` so hover and repaint do not inflate the count, and only paths that actually resolve to a vault note are included. Used to decide in a ~2-week dogfood window whether the system-prompt approach is reliable enough or whether we need a stronger fallback.
+
 ### Fixed
 - **Bare `obsidian://open?...` URLs now render as short clickable labels.** When Claude ignores the system-prompt instruction and emits the raw URL without the `[text](url)` wrapper, `ObsidianLinkTransform` detects it and wraps it in an OSC 8 hyperlink using the basename from the `path` query parameter as the visible text. Partial URLs split across PTY chunks are buffered and re-joined, with structural-boundary heuristics (`=`, `&`, `?`, `/`, half-written `%XX`) triggering the hold. An already-wrapped URL inside an OSC 8 sequence is protected from re-matching by a `(?<!\x1b\]8;;)` lookbehind.
 - **MCP context server setting now applies at runtime.** Previously, toggling `Enable MCP context server` in settings updated the stored value but did not tear down or spin up the bridge, so the change silently required a plugin reload. `ClaudeTerminalPlugin.reconfigureMcp()` is now called from the settings `onChange` handler and a Notice reminds the user that already-spawned terminals still need a manual restart (the Claude CLI snapshots `--mcp-config` at spawn time).

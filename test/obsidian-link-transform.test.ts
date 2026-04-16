@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ObsidianLinkTransform } from "../src/obsidian-link-transform";
+import { EmissionMetrics } from "../src/emission-metrics";
 
 const OSC8_OPEN = "\x1b]8;;";
 const OSC8_CLOSE = "\x1b]8;;\x1b\\";
@@ -239,6 +240,52 @@ describe("ObsidianLinkTransform", () => {
       const t = new ObsidianLinkTransform();
       const url = "obsidian://open?vault=v";
       expect(t.transform(url)).toBe(osc8(url, url));
+    });
+  });
+
+  describe("emission metrics", () => {
+    it("increments linkMarkdownEmitted once per wrapped link", () => {
+      const metrics = new EmissionMetrics();
+      const t = new ObsidianLinkTransform(metrics);
+      const u1 = "obsidian://open?vault=v&path=a.md";
+      const u2 = "obsidian://open?vault=v&path=b.md";
+      t.transform(`see [a](${u1}) and [b](${u2})`);
+      expect(metrics.linkMarkdownEmitted).toBe(2);
+    });
+
+    it("increments linkBareUrlEmitted once per wrapped bare URL", () => {
+      const metrics = new EmissionMetrics();
+      const t = new ObsidianLinkTransform(metrics);
+      const u1 = "obsidian://open?vault=v&path=a.md";
+      const u2 = "obsidian://open?vault=v&path=b.md";
+      t.transform(`raw ${u1} and ${u2}`);
+      expect(metrics.linkBareUrlEmitted).toBe(2);
+      expect(metrics.linkMarkdownEmitted).toBe(0);
+    });
+
+    it("separates markdown and bare counters when both appear together", () => {
+      const metrics = new EmissionMetrics();
+      const t = new ObsidianLinkTransform(metrics);
+      const url = "obsidian://open?vault=v&path=a.md";
+      t.transform(`[wrapped](${url}) and raw ${url}`);
+      expect(metrics.linkMarkdownEmitted).toBe(1);
+      expect(metrics.linkBareUrlEmitted).toBe(1);
+    });
+
+    it("does not count plain text as a markdown link", () => {
+      const metrics = new EmissionMetrics();
+      const t = new ObsidianLinkTransform(metrics);
+      t.transform("no links here at all\n");
+      expect(metrics.linkMarkdownEmitted).toBe(0);
+      expect(metrics.linkBareUrlEmitted).toBe(0);
+    });
+
+    it("works without a metrics collector", () => {
+      const t = new ObsidianLinkTransform();
+      const url = "obsidian://open?vault=v&path=a.md";
+      expect(() =>
+        t.transform(`see [foo](${url}) here`)
+      ).not.toThrow();
     });
   });
 });

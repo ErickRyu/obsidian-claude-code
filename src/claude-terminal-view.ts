@@ -14,6 +14,7 @@ import { FileSuggestModal } from "./file-suggest-modal";
 import { createObsidianOsc8LinkHandler } from "./obsidian-link-provider";
 import { VaultPathLinkProvider } from "./vault-path-link-provider";
 import { ObsidianLinkTransform } from "./obsidian-link-transform";
+import type { EmissionMetrics } from "./emission-metrics";
 
 export function sanitizeForPty(text: string): string {
   return text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
@@ -50,7 +51,8 @@ export class ClaudeTerminalView extends ItemView {
     private readonly getSettings: () => ClaudeTerminalSettings,
     private readonly getVaultPath: () => string,
     private readonly getPluginDir: () => string,
-    private readonly getSystemPromptFile: () => string | null = () => null
+    private readonly getSystemPromptFile: () => string | null = () => null,
+    private readonly getMetrics: () => EmissionMetrics | null = () => null
   ) {
     super(leaf);
     this.icon = "claude-ai";
@@ -129,12 +131,15 @@ export class ClaudeTerminalView extends ItemView {
       linkHandler: createObsidianOsc8LinkHandler(this.app),
     });
 
-    this.linkTransform = new ObsidianLinkTransform();
+    const metrics = this.getMetrics() ?? undefined;
+    this.linkTransform = new ObsidianLinkTransform(metrics);
 
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
     this.terminal.loadAddon(new WebLinksAddon());
-    this.terminal.registerLinkProvider(new VaultPathLinkProvider(this.terminal, this.app));
+    this.terminal.registerLinkProvider(
+      new VaultPathLinkProvider(this.terminal, this.app, metrics)
+    );
 
     this.terminal.open(this.wrapperEl);
 
