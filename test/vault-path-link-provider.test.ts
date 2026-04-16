@@ -169,6 +169,33 @@ describe("VaultPathLinkProvider", () => {
       const provider = new VaultPathLinkProvider(term, app);
       expect(() => collectLinks(provider)).not.toThrow();
     });
+
+    it("does not double-count when provideLinks is called twice for the same line", () => {
+      // xterm.js calls provideLinks on every hover and every repaint, not
+      // once per emission. A naive counter inflates on user interaction and
+      // makes the dogfood ratio useless.
+      const file = makeFile("a.md");
+      app = makeApp({ "a.md": file });
+      const metrics = new EmissionMetrics();
+      const term = makeTerminal("see a.md");
+      const provider = new VaultPathLinkProvider(term, app, metrics);
+      collectLinks(provider);
+      collectLinks(provider);
+      collectLinks(provider);
+      expect(metrics.vaultPathMentioned).toBe(1);
+    });
+
+    it("counts distinct paths on the same line separately", () => {
+      const a = makeFile("a.md");
+      const b = makeFile("b.md");
+      app = makeApp({ "a.md": a, "b.md": b });
+      const metrics = new EmissionMetrics();
+      const term = makeTerminal("see a.md and b.md");
+      const provider = new VaultPathLinkProvider(term, app, metrics);
+      collectLinks(provider);
+      collectLinks(provider);
+      expect(metrics.vaultPathMentioned).toBe(2);
+    });
   });
 
   it("re-resolves at click time and aborts if the file disappeared", () => {

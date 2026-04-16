@@ -144,7 +144,6 @@ describe("ObsidianLinkTransform", () => {
     });
   });
 
-<<<<<<< HEAD
   // Fallback for when Claude ignores the system prompt and emits a raw
   // obsidian:// URL without the markdown `[text](url)` wrapper. We detect
   // the bare URL, extract the basename from the `path` query param, and

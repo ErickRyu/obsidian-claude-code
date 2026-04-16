@@ -27,6 +27,13 @@ const EXT_TAIL_REGEX = new RegExp(
  * wrapped rows are not reconstructed (use the obsidian:// URL flow for that).
  */
 export class VaultPathLinkProvider implements ILinkProvider {
+  // `provideLinks` is called on every hover and repaint, not once per emit.
+  // Track which (line, start, text) triples have already been counted so
+  // `vaultPathMentioned` reflects distinct mentions, not user interactions.
+  // Bounded below by the terminal's scrollback (10k lines), so unbounded
+  // growth isn't a concern within a session.
+  private readonly countedMentions = new Set<string>();
+
   constructor(
     private readonly terminal: Terminal,
     private readonly app: App,
@@ -76,7 +83,15 @@ export class VaultPathLinkProvider implements ILinkProvider {
       taken.push([chosen.start, end]);
 
       // Only resolved paths count — unresolved matches are false positives.
-      this.metrics?.recordVaultPathMentioned();
+      // Dedupe per (y, start, text) because provideLinks fires on hover and
+      // repaint, not just on emission.
+      if (this.metrics) {
+        const key = `${y}:${chosen.start}:${chosen.candidate}`;
+        if (!this.countedMentions.has(key)) {
+          this.countedMentions.add(key);
+          this.metrics.recordVaultPathMentioned();
+        }
+      }
 
       links.push({
         range: {
