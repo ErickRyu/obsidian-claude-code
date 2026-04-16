@@ -210,7 +210,11 @@ describe("render-edit-diff (SH-02)", () => {
       }
       if (found) break;
     }
-    expect(found).not.toBeNull();
+    if (found === null) {
+      throw new Error(
+        "edit.jsonl fixture must contain at least one Edit or Write tool_use block",
+      );
+    }
 
     const { document: doc } = new Window();
     const parent = doc.createElement("div");
@@ -220,7 +224,7 @@ describe("render-edit-diff (SH-02)", () => {
     const cards = renderEditDiff(
       state,
       parent as unknown as HTMLElement,
-      found!.ev,
+      found.ev,
       doc as unknown as Document,
     );
     expect(cards.length).toBe(1);
@@ -228,7 +232,9 @@ describe("render-edit-diff (SH-02)", () => {
     expect(card.querySelectorAll(".claude-wv-diff-add").length).toBeGreaterThanOrEqual(1);
     expect(card.querySelectorAll(".claude-wv-diff-remove").length).toBeGreaterThanOrEqual(1);
     const pathText = card.querySelector(".claude-wv-edit-diff-path")?.textContent ?? "";
-    const filePath = (found!.block.input as { file_path?: string }).file_path ?? "";
+    const rawFilePath = found.block.input["file_path"];
+    const filePath = typeof rawFilePath === "string" ? rawFilePath : "";
+    expect(filePath.length).toBeGreaterThan(0);
     expect(pathText).toContain(filePath);
   });
 });

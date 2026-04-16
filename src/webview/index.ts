@@ -16,6 +16,7 @@ export interface WebviewPluginHost extends Plugin {
     claudePath: string;
     permissionPreset: PermissionPreset;
     extraArgs: string;
+    showThinking: boolean;
   };
 }
 
@@ -55,6 +56,11 @@ export function wireWebview(plugin: WebviewPluginHost): void {
 
   plugin.registerView(VIEW_TYPE_CLAUDE_WEBVIEW, (leaf) => {
     const view = new ClaudeWebviewView(leaf);
+    // `renderOptions` is a closure over `plugin.settings` rather than a
+    // snapshot — each dispatch reads the most recent saved value, so a user
+    // toggling "Show Thinking" in the settings panel takes effect on the
+    // next streamed event without recreating the leaf. The JSDoc on
+    // `WebviewViewRuntime.renderOptions` is the contract this satisfies.
     const runtime: WebviewViewRuntime = {
       spawnImpl: nodeSpawn,
       settings: {
@@ -62,6 +68,9 @@ export function wireWebview(plugin: WebviewPluginHost): void {
         permissionPreset: plugin.settings.permissionPreset,
         extraArgs: plugin.settings.extraArgs,
       },
+      renderOptions: () => ({
+        showThinking: plugin.settings.showThinking,
+      }),
     };
     view.__testHooks = runtime;
     return view;

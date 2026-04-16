@@ -10,9 +10,9 @@
  * On submit: emit `{kind:'ui.send', text}` with the trimmed value, then
  * clear the textarea.  Empty / whitespace-only text is a no-op.
  *
- * DOM discipline (Phase 2 gate 2-5 reminder): this module is allowed to
- * use `replaceChildren` only — no `.appendChild` / `.innerHTML` /
- * `.insertAdjacentHTML` / `.insertBefore`.  Event listeners register
+ * DOM discipline (Phase 2 gate 2-5 reminder): this module uses
+ * `replaceChildren` only — the banned-API grep gate covers this directory,
+ * so any direct-mutation DOM call would fail CI.  Event listeners register
  * through the optional `registerDomEvent` hook so the Obsidian
  * `ItemView.registerDomEvent` path owns cleanup in production; the
  * direct-attach fallback is unit-test friendly and our `dispose()`

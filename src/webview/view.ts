@@ -34,6 +34,16 @@ import {
   renderSystemInit,
   type SystemInitRenderState,
 } from "./renderers/system-init";
+import {
+  createAssistantThinkingState,
+  renderAssistantThinking,
+  type AssistantThinkingRenderState,
+} from "./renderers/assistant-thinking";
+import {
+  createEditDiffState,
+  renderEditDiff,
+  type EditDiffRenderState,
+} from "./renderers/edit-diff";
 
 /**
  * ClaudeWebviewView — Phase 2 layout + Phase 3 SessionController wiring.
@@ -51,14 +61,29 @@ import {
  * Namespace log prefix: `[claude-webview]`.
  */
 
+export interface WebviewRenderOptionsSnapshot {
+  readonly showThinking: boolean;
+}
+
 export interface WebviewViewRuntime {
   readonly spawnImpl: SpawnImpl;
   readonly settings: SpawnArgsSettings;
+  /**
+   * Provider for render-time settings. Called on every dispatch so a toggle
+   * applied from the settings panel is observed without remounting the view.
+   * `undefined` means "treat as DEFAULT_WEBVIEW_SETTINGS" (thinking
+   * collapsed). Tests can pass a fixed record by returning the same object
+   * from the closure; production wireWebview reads from `plugin.settings`
+   * inside the closure so the most recent saved setting always wins.
+   */
+  readonly renderOptions?: () => WebviewRenderOptionsSnapshot;
 }
 
 interface RendererStates {
   readonly assistantText: AssistantTextRenderState;
   readonly assistantToolUse: AssistantToolUseRenderState;
+  readonly assistantThinking: AssistantThinkingRenderState;
+  readonly editDiff: EditDiffRenderState;
   readonly userToolResult: UserToolResultRenderState;
   readonly result: ResultRenderState;
   readonly systemInit: SystemInitRenderState;
@@ -116,6 +141,8 @@ export class ClaudeWebviewView extends ItemView {
     this.states = {
       assistantText: createAssistantTextState(),
       assistantToolUse: createAssistantToolUseState(),
+      assistantThinking: createAssistantThinkingState(),
+      editDiff: createEditDiffState(),
       userToolResult: createUserToolResultState(),
       result: createResultState(),
       systemInit: createSystemInitState(),
@@ -197,10 +224,21 @@ export class ClaudeWebviewView extends ItemView {
     doc: Document,
   ): void {
     const cards = layout.cardsEl;
+    const runtime = this.__testHooks;
+    const renderOptions = runtime?.renderOptions?.();
+    const showThinking = renderOptions?.showThinking ?? false;
     switch (event.type) {
       case "assistant":
         renderAssistantText(states.assistantText, cards, event, doc);
         renderAssistantToolUse(states.assistantToolUse, cards, event, doc);
+        renderAssistantThinking(
+          states.assistantThinking,
+          cards,
+          event,
+          doc,
+          { showThinking },
+        );
+        renderEditDiff(states.editDiff, cards, event, doc);
         return;
       case "user":
         renderUserToolResult(states.userToolResult, cards, event, doc);
