@@ -21,7 +21,9 @@
     "@electron/rebuild": "^3.6.0",
     "@types/node": "^20.11.0",
     "esbuild": "^0.21.0",
+    "happy-dom": "^20.9.0",
     "obsidian": "latest",
+    "tsx": "^4.21.0",
     "typescript": "^5.4.0",
     "vitest": "^4.1.4"
   },

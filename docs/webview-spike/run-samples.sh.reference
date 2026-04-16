@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Collect stream-json samples for spike. Re-runs produce fresh samples (sessions differ).
+# Requires `claude` on PATH (typically via login shell at $HOME/.local/bin or similar).
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OUT="$SCRIPT_DIR/samples"
+mkdir -p "$OUT"
+
+CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
+if [[ ! -x "$CLAUDE_BIN" ]]; then
+  CLAUDE_BIN="$(command -v claude || true)"
+fi
+if [[ -z "${CLAUDE_BIN}" ]]; then
+  echo "claude not found. Set CLAUDE_BIN env var." >&2
+  exit 1
+fi
+echo "Using: $CLAUDE_BIN ($("$CLAUDE_BIN" --version))"
+
+run() {
+  local name="$1"
+  local mode="$2"   # permission mode flag value
+  local prompt="$3"
+  echo "=== $name ==="
+  echo "$prompt" | "$CLAUDE_BIN" -p \
+    --output-format=stream-json --input-format=stream-json --verbose \
+    --permission-mode="$mode" \
+    > "$OUT/$name.jsonl" 2>&1 || true
+  wc -l "$OUT/$name.jsonl"
+}
+
+# 1) Hello — baseline text turn
+run hello acceptEdits \
+  '{"type":"user","message":{"role":"user","content":"Respond with one word: hello"}}'
+
+# 2) Edit a file (tool_use → tool_result)
+echo "Hello from spike" > /tmp/spike-test-edit.md
+run edit acceptEdits \
+  '{"type":"user","message":{"role":"user","content":"Edit /tmp/spike-test-edit.md and append a line that says: edited by claude"}}'
+
+# 3) Plan mode
+run plan-mode plan \
+  '{"type":"user","message":{"role":"user","content":"Plan how you would build a simple todo app. Do not implement."}}'
+
+# 4) TodoWrite
+run todo acceptEdits \
+  '{"type":"user","message":{"role":"user","content":"Use TodoWrite to create a 3-item plan for building a TODO app: 1. set up scaffold 2. add persistence 3. write tests. Do not do anything else."}}'
+
+# 5) Write with default permission (probes for permission_request event)
+run permission default \
+  '{"type":"user","message":{"role":"user","content":"Write a file /tmp/spike-perm-test.txt with content: hello"}}'
+
+# 6) Slash commands
+run slash-compact acceptEdits \
+  '{"type":"user","message":{"role":"user","content":"/compact"}}'
+run slash-mcp acceptEdits \
+  '{"type":"user","message":{"role":"user","content":"/mcp"}}'
+
+echo
+echo "Unique event types across samples:"
+jq -r '[.type, .subtype // ""] | @tsv' "$OUT"/*.jsonl 2>/dev/null | sort -u

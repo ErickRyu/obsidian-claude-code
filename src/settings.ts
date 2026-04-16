@@ -5,8 +5,14 @@ import {
   DEFAULT_FONT_FAMILY,
   DEFAULT_FONT_SIZE,
 } from "./constants";
+import {
+  DEFAULT_WEBVIEW_SETTINGS,
+  PermissionPreset,
+  UiMode,
+  WebviewSettings,
+} from "./webview/settings-adapter";
 
-export interface ClaudeTerminalSettings {
+export interface ClaudeTerminalSettings extends WebviewSettings {
   claudePath: string;
   fontSize: number;
   fontFamily: string;
@@ -22,7 +28,10 @@ export const DEFAULT_SETTINGS: ClaudeTerminalSettings = {
   extraArgs: "",
   cwdOverride: "",
   enableMcp: true,
+  ...DEFAULT_WEBVIEW_SETTINGS,
 };
+
+export type { UiMode, PermissionPreset, WebviewSettings };
 
 export class ClaudeTerminalSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: ClaudeTerminalPlugin) {
@@ -111,6 +120,78 @@ export class ClaudeTerminalSettingTab extends PluginSettingTab {
             this.plugin.settings = {
               ...this.plugin.settings,
               cwdOverride: value,
+            };
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("UI mode")
+      .setDesc(
+        "Choose between the xterm.js terminal (default, stable) and the new Webview (v0.6.0 beta, opt-in). Switching requires an Obsidian restart."
+      )
+      .addDropdown((drop) => {
+        drop.addOption("terminal", "Terminal (xterm.js — default)");
+        drop.addOption("webview", "Webview (beta)");
+        drop.setValue(this.plugin.settings.uiMode);
+        drop.onChange(async (value: string) => {
+          const next = (value === "webview" ? "webview" : "terminal") as UiMode;
+          this.plugin.settings = {
+            ...this.plugin.settings,
+            uiMode: next,
+          };
+          await this.plugin.saveSettings();
+          new Notice(
+            "웹뷰 적용을 위해 Obsidian 재시작 필요 (Restart Obsidian to apply UI mode change)"
+          );
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Permission preset (Webview)")
+      .setDesc(
+        "allowedTools bundle passed to claude -p. Safe: Read/Glob/Grep. Standard: +Edit/Write/TodoWrite. Full: +Bash. Applies to the next spawn."
+      )
+      .addDropdown((drop) => {
+        drop.addOption("safe", "Safe");
+        drop.addOption("standard", "Standard");
+        drop.addOption("full", "Full");
+        drop.setValue(this.plugin.settings.permissionPreset);
+        drop.onChange(async (value: string) => {
+          const next = (value === "safe" || value === "full" ? value : "standard") as PermissionPreset;
+          this.plugin.settings = {
+            ...this.plugin.settings,
+            permissionPreset: next,
+          };
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Show debug system events (Webview)")
+      .setDesc("Render hook_started / hook_response cards as collapsed JSON. Off by default to reduce noise.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showDebugSystemEvents)
+          .onChange(async (value) => {
+            this.plugin.settings = {
+              ...this.plugin.settings,
+              showDebugSystemEvents: value,
+            };
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Show thinking blocks expanded (Webview)")
+      .setDesc("When on, assistant thinking <details> elements are open by default.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showThinking)
+          .onChange(async (value) => {
+            this.plugin.settings = {
+              ...this.plugin.settings,
+              showThinking: value,
             };
             await this.plugin.saveSettings();
           })

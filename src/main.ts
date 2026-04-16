@@ -18,6 +18,7 @@ import { ensureNodePty } from "./native-bootstrap";
 import { McpContextBridge } from "./mcp-server";
 import { SystemPromptWriter } from "./system-prompt-writer";
 import { EmissionMetrics } from "./emission-metrics";
+import { wireWebview } from "./webview";
 
 export default class ClaudeTerminalPlugin extends Plugin {
   settings: ClaudeTerminalSettings = DEFAULT_SETTINGS;
@@ -66,6 +67,10 @@ export default class ClaudeTerminalPlugin extends Plugin {
         () => this.emissionMetrics
       );
     });
+
+    // Phase 0: conditionally register Claude Webview (opt-in via settings.uiMode).
+    // When uiMode === "terminal" this is a no-op — existing users see zero change.
+    wireWebview(this);
 
     // Track last active leaves for focus toggle and send target
     this.registerEvent(

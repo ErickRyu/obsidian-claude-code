@@ -4,3 +4,11 @@ main.js
 data.json
 .DS_Store
 .claude/
+
+# Ralph Loop artifacts (v0.6.0 웹뷰 foundation)
+artifacts/
+output/reviews/
+.webview-test-archives/
+PROGRESS.md
+HUMAN_ACTION_REQUIRED.md
+V0.6.0_WEBVIEW_FOUNDATION_COMPLETE
