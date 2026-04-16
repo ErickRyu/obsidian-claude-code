@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { replayFixture, eventCountByType } from "../../src/webview/parser/fixture-replay";
+import { replayFixture, eventCountByType } from "./helpers/fixture-replay";
 
 const FIXTURE_DIR = join(__dirname, "..", "fixtures", "stream-json");
 

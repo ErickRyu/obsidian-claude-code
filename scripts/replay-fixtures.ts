@@ -18,7 +18,7 @@
  */
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { replayFixture, eventCountByType } from "../src/webview/parser/fixture-replay";
+import { replayFixture, eventCountByType } from "../test/webview/helpers/fixture-replay";
 // Grep anchor for check-evidence.sh condition 8 — keep this import even if
 // the symbol is only referenced indirectly through fixture-replay.ts.
 import { parseLine } from "../src/webview/parser/stream-json-parser";

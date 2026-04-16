@@ -2,6 +2,32 @@
 
 All notable changes to obsidian-claude-code will be documented in this file.
 
+## [0.6.0-beta.1] - 2026-04-16
+
+v0.6.0 Beta 1 — **Webview foundation (opt-in)**. Ships the first cut of the new custom `ItemView` that coexists with the legacy xterm.js terminal behind a `uiMode` toggle. This release is **infrastructure-only**: no end-user workflow changes unless the user explicitly enables `uiMode: "webview"` in settings. Existing users stay on the xterm terminal path by default with zero behavior change. Subsequent v0.6.x releases will build diff accept/reject (v0.7.0) and plan-as-note (v0.8.0) on top of this foundation.
+
+### Added
+- **Custom webview `ItemView` (opt-in, Beta).** A new `VIEW_TYPE_CLAUDE_WEBVIEW` view spawns `claude -p --output-format=stream-json` via `child_process.spawn` (CLI, not the Anthropic SDK), parses the JSONL stream event-by-event, and renders `assistant` text, `tool_use`, `tool_result`, and `result` events as structured HTML cards. The webview is registered only when the user opts in via the `uiMode` setting; the terminal path is unaffected.
+- **`uiMode` setting toggle (`"terminal" | "webview"`, default `"terminal"`).** Changing the setting shows a Notice "재시작 필요" — the view registration is fixed at plugin load, so switching modes requires an Obsidian restart. Settings migration uses `Object.assign(DEFAULT_SETTINGS, loaded)` so existing installs pick up the new field with the safe default automatically.
+- **Permission preset dropdown (Safe / Standard / Full).** The webview exposes `--allowedTools` and `--permission-mode` as a three-choice preset: **Safe** (read-only tools), **Standard** (read + edit + bash with prompts), **Full** (bypass prompts — for power users who trust the session). The preset is applied per-spawn, so each webview session can run under a different permission posture.
+- **Stream-json parser with UnknownEvent preservation.** Parser consumes stdout line-by-line through a `LineBuffer` with tail retention for partial chunks; every recognized event class is dispatched to a typed handler, and any wrapper whose `type` does not match a known class is emitted as `UnknownEvent` (raw JSON preserved) rather than thrown. Never-silent-swallow: all 6 error classes (spawn failure / JSONL parse error / partial line / stderr noise / stdin EPIPE / UnknownEvent) have explicit, documented policies with namespaced `[claude-webview]` console output.
+- **Collapsed JSON-dump card for unknown events.** Debug users see drift in the CLI's JSONL schema as a collapsible `<details>` card instead of a hidden failure, enabling schema-drift detection over time.
+- **8 replay fixtures + differential assertions.** `hello` / `edit` / `permission` / `plan-mode` / `resume` / `slash-compact` / `mcp-tool` / `unknown-event` fixtures replay through the parser with `rawSkipped === 0` and satisfy key-field assertions (event-count-by-type, card-kinds Set membership, card-count-by-kind). No HTML snapshots — only semantic key-field checks so fixtures survive cosmetic renderer tweaks.
+- **Single real `claude -p` smoke test** (≤ 30 s timeout). Validates a real CLI spawn returns a UUID `session_id`, a `version` field, and a non-empty assistant card in end-to-end mode.
+- **"Webview mode (Beta, opt-in)" README section.** Documents how to enable the beta, the three permission presets, and the Beta-scope constraints.
+
+### Changed
+- `manifest.json` / `VERSION` / `versions.json` / `package.json` bumped to `0.6.0-beta.1`.
+- Plugin load now conditionally registers `VIEW_TYPE_CLAUDE_WEBVIEW` only when `uiMode === "webview"`; `VIEW_TYPE_CLAUDE_TERMINAL` registration is unchanged.
+- Console logs for the webview path use a new `[claude-webview]` namespace, kept strictly separate from the legacy `[claude-terminal]` namespace so log filtering stays unambiguous.
+
+### Known issues / Beta limitations
+- **`/mcp` slash command is not supported in webview mode.** MCP context still flows through the terminal path; the webview beta does not wire up the MCP bridge.
+- **Inline permission prompts are not supported in webview mode.** Use the permission preset dropdown (Safe / Standard / Full) instead. Fine-grained per-call approval lands in v0.7.0.
+- **Switching `uiMode` at runtime requires an Obsidian restart.** The Notice "재시작 필요" reminds users; runtime re-registration is intentionally deferred to keep view lifecycle simple in Beta.
+- **Screenshots / GIFs for the webview are not included in this Beta** — they will land with the v0.6.0 GA release once UX stabilizes.
+- **Webview is opt-in only.** With `uiMode: "terminal"` (the default) all existing behavior — xterm.js, node-pty, system prompt, MCP bridge, OSC 8 obsidian:// links, @-mention picker — is preserved unchanged. Existing users will not notice this release unless they explicitly flip the setting.
+
 ## [0.5.2] - 2026-04-16
 
 Track A v0.5.x terminal-mode maintenance bundle — critical UX regressions fixed, measurement infrastructure added, release automation tightened. No new features; the xterm.js path stays on life support until the v0.6.0 webview lands.

@@ -1,8 +1,20 @@
+/**
+ * Test-only fixture replay helper.
+ *
+ * Moved here from `src/webview/parser/fixture-replay.ts` per Phase 2 audit
+ * H-1: `parser/*` must have zero Node/DOM/Obsidian dependencies. Fixture
+ * replay legitimately needs `node:fs` + `node:crypto`, so it lives under
+ * `test/webview/helpers/` (also consumed by evidence scripts under
+ * `scripts/`).
+ *
+ * The `src/webview/parser/` modules remain DOM/Node-free so they can run
+ * unchanged inside the plugin runtime.
+ */
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { LineBuffer } from "./line-buffer";
-import { parseLine } from "./stream-json-parser";
-import type { StreamEvent } from "./types";
+import { LineBuffer } from "../../../src/webview/parser/line-buffer";
+import { parseLine } from "../../../src/webview/parser/stream-json-parser";
+import type { StreamEvent } from "../../../src/webview/parser/types";
 
 export interface ReplayResult {
   events: StreamEvent[];
