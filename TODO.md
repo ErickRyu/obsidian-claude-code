@@ -32,7 +32,7 @@ Codex가 웹검색으로 확인해준 Anthropic 공식 IDE 통합 현황이 이 
 웹뷰 전환 전까지 현재 UX를 깨지지 않게 유지. **이 섹션에는 순수한 터미널 폴리시
 기능을 넣지 않습니다** — 추가 기능은 전부 웹뷰 이후로 미룸.
 
-### [ ] Bare `obsidian://` URL 렌더링 회복
+### [x] Bare `obsidian://` URL 렌더링 회복
 
 **What:** Claude가 `[text](obsidian://...)` markdown 래핑 없이 raw URL만 내보낼 때,
 사용자에게 긴 URL이 그대로 노출되고 Cmd+Click도 안 됨. v0.5.1 OSC 8 전환 이전에는
@@ -53,7 +53,7 @@ Codex가 웹검색으로 확인해준 Anthropic 공식 IDE 통합 현황이 이 
 
 ---
 
-### [ ] MCP setting toggle 런타임 반영
+### [x] MCP setting toggle 런타임 반영
 
 **What (기존 버그, /autoplan Codex 발견):** `src/settings.ts:119`에서 `enableMcp`
 값만 업데이트하고 `setupMcp()` / `teardownMcp()`를 호출 안 함. 설정 바꿔도 플러그인
@@ -69,7 +69,7 @@ Codex가 웹검색으로 확인해준 Anthropic 공식 IDE 통합 현황이 이 
 
 ---
 
-### [ ] Release CI: built `main.js` artifact 배포
+### [x] Release CI: built `main.js` artifact 배포
 
 **What:** `main.js`가 `.gitignore`에 포함돼 있어 repo에 없음. 다른 사용자가
 설치하려면 직접 `npm run build` 해야 함 (노드 + bun 등 의존성 요구). Obsidian
@@ -86,7 +86,7 @@ artifact로 올리기**.
 
 ---
 
-### [ ] URL emission compliance 측정 (dogfood)
+### [x] URL emission compliance 측정 (dogfood)
 
 **What:** 이번 회귀 사건이 증명한 바 — "Claude가 시스템 프롬프트 지시를 100% 따른다"는
 전제는 **측정되지 않음**. 스크린샷에서 Claude는 `[text](url)` 래퍼를 빼먹고 raw URL만
@@ -135,6 +135,26 @@ artifact로 올리기**.
 **Effort:** ~2시간.
 
 **Note:** 웹뷰 모드에서도 같은 핸들러 그대로 재사용.
+
+---
+
+### [ ] Markdown link label 정제 (percent-decode + basename)
+
+**What:** Claude가 `[text](obsidian://...)` 형식은 따르지만 `text` 자리에
+`concepts%2Fagent-orchestration.md` 같이 percent-encoded 전체 경로를 넣는 경우가
+빈번. 사이드바 좁은 폭에서 `%2F`가 줄바꿈되면 글자 깨져 보임. 시스템 프롬프트는
+`<basename>` 사용을 요구하지만 Claude가 꾸준히 무시.
+
+**How:**
+- `ObsidianLinkTransform`의 markdown replace 콜백에서 `text` 값을 후처리:
+  `%XX` 시퀀스가 포함되면 `decodeURIComponent(text)` 후 basename 추출
+- 이미 깨끗한 label (`llm-strategic-bias` 등)은 그대로 통과
+- 시스템 프롬프트 instruction도 예시를 더 명확하게 강화 (dogfood 결과 반영)
+
+**Effort:** ~15분 CC time.
+
+**Depends on:** emission compliance dogfood 2주 결과 후 시스템 프롬프트 강화와 묶어서
+진행하면 효율적.
 
 ---
 
