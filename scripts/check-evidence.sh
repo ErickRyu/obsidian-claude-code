@@ -23,7 +23,7 @@ if [ ! -f "$EVIDENCE" ]; then
   exit 1
 fi
 
-node --input-type=module -e '
+node -e '
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
