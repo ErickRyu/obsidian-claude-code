@@ -11,6 +11,7 @@ import {
   type WebviewMutableSettings,
 } from "./view";
 import { disposeAllSessionControllers } from "./session/session-controller";
+import { SessionArchive } from "./session/session-archive";
 import type { PermissionPreset } from "./settings-adapter";
 
 /**
@@ -56,7 +57,26 @@ export interface WebviewPluginHost extends Plugin {
  *   processes at unload — orphan defense when Obsidian skips `onClose`
  *   (plugin disable / vault reload / crash).
  */
-export function wireWebview(plugin: WebviewPluginHost): void {
+/**
+ * Options wireWebview accepts beyond the plugin host itself. Kept narrow
+ * so a test harness can opt out of the archive (the orthogonal Phase 3
+ * lifecycle gates don't care about SH-07).
+ */
+export interface WireWebviewOptions {
+  /**
+   * Absolute directory under which the SessionArchive writes
+   * `<session_id>.jsonl` files. Production wiring (main.ts) passes
+   * `<pluginDir>/archives`. When `undefined`, no archive is wired and
+   * resume fallback (SH-07) is a no-op — the CLI's own `--resume`
+   * semantics remain the only recovery path.
+   */
+  readonly archiveBaseDir?: string;
+}
+
+export function wireWebview(
+  plugin: WebviewPluginHost,
+  options: WireWebviewOptions = {},
+): void {
   if (plugin.settings.uiMode !== "webview") {
     // eslint-disable-next-line no-console
     console.log("[claude-webview] uiMode=terminal, skipping webview registration");
@@ -69,6 +89,16 @@ export function wireWebview(plugin: WebviewPluginHost): void {
   plugin.register(() => {
     disposeAllSessionControllers();
   });
+
+  // Phase 5b — one SessionArchive instance per plugin load. Shared across
+  // every leaf so archived turns for the same session_id accumulate into
+  // the same `<baseDir>/<session_id>.jsonl` file. A leaf that opens with
+  // `resumeOnStart=true` and hits a CLI-side resume failure can then
+  // `archive.load(lastSessionId)` the JSONL back and replay.
+  const archive =
+    options.archiveBaseDir !== undefined && options.archiveBaseDir.length > 0
+      ? new SessionArchive({ baseDir: options.archiveBaseDir })
+      : undefined;
 
   // Phase 5a — one-shot resume flag. The resume command flips this to
   // `true` right before `setViewState` triggers the factory; the factory
@@ -100,6 +130,7 @@ export function wireWebview(plugin: WebviewPluginHost): void {
       spawnImpl: nodeSpawn,
       settings: runtimeSettings,
       resumeOnStart,
+      archive,
       // `renderOptions` is a closure over `plugin.settings` rather than a
       // snapshot — each dispatch reads the most recent saved value, so a
       // user toggling "Show Thinking" or "Show debug system events" in the

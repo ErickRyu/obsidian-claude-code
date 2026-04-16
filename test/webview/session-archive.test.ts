@@ -52,7 +52,7 @@ function makeFakeFs(): ArchiveFsImpl & {
     existsSync(p: string): boolean {
       return files.has(p) || dirs.has(p);
     },
-    readFileSync(p: string): string {
+    readFileSync(p: string, _encoding: "utf8"): string {
       const content = files.get(p);
       if (content === undefined) {
         throw new Error(`ENOENT: ${p}`);

@@ -8,6 +8,7 @@ import {
   type SpawnImpl,
 } from "./session/session-controller";
 import type { SpawnArgsSettings } from "./session/spawn-args";
+import type { SessionArchive } from "./session/session-archive";
 import type { StreamEvent } from "./parser/types";
 import {
   createAssistantTextState,
@@ -154,6 +155,17 @@ export interface WebviewViewRuntime {
    * mutation for integration assertions.
    */
   readonly persistSettings?: () => void | Promise<void>;
+  /**
+   * Phase 5b — when present, the SessionController mirrors every parsed
+   * event into this archive, and a failed `--resume` attempt on a
+   * `resumeOnStart` leaf falls back to `archive.load(lastSessionId)` +
+   * in-place replay through the same `dispatchStreamEvent` pipeline as
+   * live stdout. Left `undefined` in test harnesses that do not exercise
+   * SH-07; a legitimate production wiring with archive disabled should
+   * also pass `undefined` rather than a no-op stub so the controller
+   * short-circuits its buffer logic cleanly.
+   */
+  readonly archive?: SessionArchive;
 }
 
 interface RendererStates {
@@ -284,6 +296,7 @@ export class ClaudeWebviewView extends ItemView {
         settings: runtime.settings,
         bus,
         spawnImpl: runtime.spawnImpl,
+        archive: runtime.archive,
         onSessionId: (id) => {
           runtime.settings.lastSessionId = id;
           const persist = runtime.persistSettings;
@@ -324,6 +337,69 @@ export class ClaudeWebviewView extends ItemView {
         runtime.settings.lastSessionId.length > 0
           ? runtime.settings.lastSessionId
           : undefined;
+
+      // Phase 5b — resume fallback (SH-07). When a `--resume <sid>` spawn
+      // reports a clean failure (`result.is_error=true`) OR dies with a
+      // non-zero exit code before any successful result event, hydrate
+      // the leaf from the local `SessionArchive` so the user still sees
+      // the prior turn context. Guarded to fire at most once per view:
+      // (a) both failure signals may arrive close in time; (b) even with
+      // a successful fallback, late-arriving stderr churn must not
+      // re-replay. The flag is also implicitly reset on `onClose` via a
+      // new view instance.
+      const archive = runtime.archive;
+      if (resumeId !== undefined && archive) {
+        const archiveRef = archive;
+        const resumeSid = resumeId;
+        let fallbackTriggered = false;
+        const runFallback = (): void => {
+          if (this.disposed) return;
+          if (this.leaf.view !== this) return;
+          if (fallbackTriggered) return;
+          fallbackTriggered = true;
+          let events: StreamEvent[];
+          try {
+            events = archiveRef.load(resumeSid);
+          } catch (err: unknown) {
+            // eslint-disable-next-line no-console
+            console.error(
+              "[claude-webview] resume fallback: archive.load threw",
+              err,
+            );
+            return;
+          }
+          if (events.length === 0) return;
+          const l = this.layout;
+          const s = this.states;
+          if (!l || !s) return;
+          for (const ev of events) {
+            if (this.disposed) return;
+            if (this.leaf.view !== this) return;
+            this.dispatchStreamEvent(ev, l, s, doc);
+          }
+        };
+        bus.on("stream.event", (e) => {
+          if (e.event.type !== "result") return;
+          if (e.event.is_error !== true) return;
+          runFallback();
+        });
+        bus.on("session.error", (e) => {
+          // Narrow fallback trigger to non-zero / null exit codes only.
+          // `handleStderrData` emits `stderr: ...` for every non-empty
+          // stderr chunk (warmup warnings, deprecation notices, rate-limit
+          // hints) — those must NOT force an archive replay on top of a
+          // live successful resume. Likewise `archive flush|append`
+          // errors and `stdin|stdout|spawn` errors are controller-local
+          // incidents, not resume failures. Only `exit: <non-zero|null>`
+          // (emitted by `handleExit`) is an unambiguous resume-path
+          // failure signal.
+          const m = e.message;
+          if (!m.startsWith("exit:")) return;
+          if (m === "exit: 0") return;
+          runFallback();
+        });
+      }
+
       controller.start(undefined, resumeId);
     }
 

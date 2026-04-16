@@ -77,7 +77,7 @@ function makeFakeFs(): ArchiveFsImpl & {
     existsSync(p: string): boolean {
       return files.has(p) || dirs.has(p);
     },
-    readFileSync(p: string): string {
+    readFileSync(p: string, _encoding: "utf8"): string {
       const c = files.get(p);
       if (c === undefined) throw new Error(`ENOENT: ${p}`);
       return c;
@@ -247,9 +247,9 @@ describe("Webview resume fallback → SessionArchive replay (Phase 5b SH-07)", (
     // Wrap fs.readFileSync to count load invocations.
     const original = fs.readFileSync;
     let loadReadCount = 0;
-    fs.readFileSync = (p: string) => {
+    fs.readFileSync = (p: string, _encoding: "utf8") => {
       loadReadCount++;
-      return original.call(fs, p);
+      return original.call(fs, p, _encoding);
     };
 
     await view.onOpen();
@@ -274,9 +274,9 @@ describe("Webview resume fallback → SessionArchive replay (Phase 5b SH-07)", (
     });
     const original = fs.readFileSync;
     let loadReadCount = 0;
-    fs.readFileSync = (p: string) => {
+    fs.readFileSync = (p: string, _encoding: "utf8") => {
       loadReadCount++;
-      return original.call(fs, p);
+      return original.call(fs, p, _encoding);
     };
     await view.onOpen();
     const child = children[0];
@@ -284,6 +284,38 @@ describe("Webview resume fallback → SessionArchive replay (Phase 5b SH-07)", (
 
     emitIsErrorResult(child);
     child.emit("exit", 1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(loadReadCount).toBe(0);
+    expect(rootHost.textContent ?? "").not.toContain("ARCHIVED_HELLO");
+    await view.onClose();
+  });
+
+  it("stderr emission during resume does NOT trigger archive replay (review HIGH fix)", async () => {
+    // Regression guard for the review finding: prior implementation fired
+    // the fallback on any `session.error` whose message was not exactly
+    // `exit: 0`, including `stderr: <chunk>` which is routine warmup
+    // output on many real sessions. The fix narrows the listener to
+    // `exit:` messages only. This test overlays archived content only
+    // when the guard is correctly tight.
+    const { view, rootHost, children, fs } = makeHarness({
+      resumeOnStart: true,
+      withArchive: true,
+    });
+    const original = fs.readFileSync;
+    let loadReadCount = 0;
+    fs.readFileSync = (p: string, _encoding: "utf8") => {
+      loadReadCount++;
+      return original.call(fs, p, _encoding);
+    };
+
+    await view.onOpen();
+    const child = children[0];
+    expect(child).toBeTruthy();
+
+    // CLI warmup warning on stderr — should NOT trigger fallback.
+    child.stderr.emit("data", "deprecation: foo will be removed\n");
     await Promise.resolve();
     await Promise.resolve();
 

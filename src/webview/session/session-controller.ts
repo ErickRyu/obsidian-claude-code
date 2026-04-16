@@ -34,6 +34,7 @@ import { parseLine } from "../parser/stream-json-parser";
 import type { StreamEvent } from "../parser/types";
 import type { Bus } from "../event-bus";
 import { buildSpawnArgs, type SpawnArgsSettings } from "./spawn-args";
+import type { SessionArchive } from "./session-archive";
 
 /**
  * The spawn function the controller calls.  The production wiring passes
@@ -61,6 +62,16 @@ export interface SessionControllerOptions {
    * instance: subsequent result events with the same id do not re-fire.
    */
   readonly onSessionId?: (sessionId: string) => void;
+  /**
+   * Phase 5b — when wired, every parsed `StreamEvent` is also appended
+   * to the archive under the first session_id observed on the stream.
+   * Events arriving before a session_id is known are buffered in-memory
+   * and flushed on the first session-id-bearing event (typically
+   * `system.init`). Dropped-silently in error scenarios so a filesystem
+   * hiccup never crashes the rendering pipeline — the archive is
+   * best-effort, the bus dispatch is authoritative.
+   */
+  readonly archive?: SessionArchive;
 }
 
 const activeSessionControllers = new Set<SessionController>();
@@ -87,6 +98,14 @@ export class SessionController {
   private readonly drainQueue: string[] = [];
   private awaitingDrain = false;
   private lastNotifiedSessionId: string | null = null;
+  /**
+   * Phase 5b archive bookkeeping. `capturedSessionId` is set the first
+   * time any parsed event exposes a non-empty session_id (typically
+   * `system.init`). Until then, events accumulate in `pendingArchive`
+   * and are flushed in-order once the id is known.
+   */
+  private capturedSessionId: string | null = null;
+  private pendingArchive: StreamEvent[] = [];
 
   constructor(private readonly opts: SessionControllerOptions) {
     activeSessionControllers.add(this);
@@ -205,11 +224,67 @@ export class SessionController {
       const parsed = parseLine(line);
       if (parsed.ok) {
         this.notifySessionIdIfNew(parsed.event);
+        this.archiveEvent(parsed.event);
         this.opts.bus.emit({ kind: "stream.event", event: parsed.event });
       }
       // Malformed lines are silent: `parser-schema.test.ts` already
       // exercises the schema-rejection branch; surfacing them here as
       // session.error would spam during normal claude -p warm-up.
+    }
+  }
+
+  /**
+   * Phase 5b — mirror each parsed event into the archive. Events that
+   * arrive before a session_id is observed are buffered (typically a
+   * short window: `system.init` carries session_id and is the first
+   * event on a healthy stream). A filesystem error surfaces as
+   * `session.error` but does NOT interrupt bus dispatch — archive is
+   * best-effort.
+   */
+  private archiveEvent(event: StreamEvent): void {
+    if (this.disposed) return;
+    const archive = this.opts.archive;
+    if (!archive) return;
+
+    if (this.capturedSessionId === null) {
+      const sid = extractSessionId(event);
+      if (sid === null) {
+        this.pendingArchive.push(event);
+        return;
+      }
+      this.capturedSessionId = sid;
+      // Per-event try/catch — a transient FS error on event N must not
+      // silently discard events N+1..end. Each failure still emits a
+      // single `session.error` so the UI surfaces the incident without
+      // spamming if the FS is totally wedged.
+      let dropped = 0;
+      let firstErr: string | null = null;
+      for (const buffered of this.pendingArchive) {
+        try {
+          archive.append(sid, buffered);
+        } catch (err: unknown) {
+          dropped++;
+          if (firstErr === null) {
+            firstErr = err instanceof Error ? err.message : String(err);
+          }
+        }
+      }
+      if (firstErr !== null) {
+        this.emitError(
+          `archive flush: ${firstErr} (dropped ${dropped} buffered event(s))`,
+        );
+      }
+      this.pendingArchive = [];
+    }
+
+    const sid = this.capturedSessionId;
+    if (sid === null) return;
+    try {
+      archive.append(sid, event);
+    } catch (err: unknown) {
+      this.emitError(
+        `archive append: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -251,6 +326,7 @@ export class SessionController {
       const parsed = parseLine(tail);
       if (parsed.ok) {
         this.notifySessionIdIfNew(parsed.event);
+        this.archiveEvent(parsed.event);
         this.opts.bus.emit({ kind: "stream.event", event: parsed.event });
       }
     }
@@ -283,6 +359,14 @@ export class SessionController {
     this.child = null;
     this.drainQueue.length = 0;
     this.awaitingDrain = false;
+    // HIGH (review) — release pendingArchive refs eagerly. On a path where
+    // the controller is disposed without its owning bus (e.g. plugin
+    // unload calling `disposeAllSessionControllers` from the orphan
+    // registry), a closure on the bus may hold this instance alive until
+    // unload finishes, and any unflushed events would stay retained.
+    // Matches drainQueue's eager clear above.
+    this.pendingArchive = [];
+    this.capturedSessionId = null;
 
     if (!child) return;
 
@@ -310,6 +394,36 @@ export class SessionController {
       child.kill("SIGTERM");
     } catch {
       // Continue — the child may already be dead.
+    }
+  }
+}
+
+/**
+ * Extract the `session_id` from any `StreamEvent` variant that carries one.
+ * Returns `null` for `UnknownEvent` and for events whose `session_id` is
+ * missing / empty. Phase 5b archive capture uses this to learn the id from
+ * the first emitting event (typically `system.init`) rather than waiting
+ * for the final `result` event.
+ */
+function extractSessionId(event: StreamEvent): string | null {
+  switch (event.type) {
+    case "system":
+    case "assistant":
+    case "rate_limit_event":
+    case "result": {
+      const sid = event.session_id;
+      return typeof sid === "string" && sid.length > 0 ? sid : null;
+    }
+    case "user": {
+      const sid = event.session_id;
+      return typeof sid === "string" && sid.length > 0 ? sid : null;
+    }
+    case "__unknown__":
+      return null;
+    default: {
+      const _exhaustive: never = event;
+      void _exhaustive;
+      return null;
     }
   }
 }

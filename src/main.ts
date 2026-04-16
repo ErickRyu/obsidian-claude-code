@@ -70,7 +70,12 @@ export default class ClaudeTerminalPlugin extends Plugin {
 
     // Phase 0: conditionally register Claude Webview (opt-in via settings.uiMode).
     // When uiMode === "terminal" this is a no-op — existing users see zero change.
-    wireWebview(this);
+    wireWebview(this, {
+      // Phase 5b — resume fallback archive. Co-locates with the plugin's
+      // own data dir so it rides along with vault backups. The directory
+      // is created lazily on first `append()` — no pre-flight mkdir.
+      archiveBaseDir: path.join(this.getPluginDir(), "archives"),
+    });
 
     // Track last active leaves for focus toggle and send target
     this.registerEvent(
