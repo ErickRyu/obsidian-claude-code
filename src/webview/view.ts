@@ -323,30 +323,57 @@ export class ClaudeWebviewView extends ItemView {
         },
       });
       this.controller = controller;
-      bus.on("ui.send", (e) => {
-        if (this.disposed) return;
-        controller.send(e.text);
-      });
-      // Phase 5a — honor the one-shot resume flag that the resume command
-      // set on the runtime. `start()` already validates the UUID shape
-      // (throws on malformed), but we still check for a non-empty string
-      // here so an accidental resume-on-start with empty id quietly
-      // starts a fresh session instead of crashing the view.
+      // Lazy start: don't spawn claude -p until the user sends the first
+      // message. `claude -p` without a prompt argument + --input-format
+      // stream-json may exit immediately if no stdin arrives fast enough.
+      // By deferring spawn to the first ui.send, the prompt argument
+      // carries the user's text and the session starts reliably.
       const resumeId =
         runtime.resumeOnStart === true &&
         runtime.settings.lastSessionId.length > 0
           ? runtime.settings.lastSessionId
           : undefined;
 
+      // For resume, start immediately (the session has prior context).
+      if (resumeId !== undefined) {
+        controller.start(undefined, resumeId);
+      }
+
+      bus.on("ui.send", (e) => {
+        if (this.disposed) return;
+        if (!controller.isStarted()) {
+          // First message: spawn with the user's text as initialText.
+          // This passes `-p` with the text as the prompt argument,
+          // ensuring claude starts processing immediately.
+          controller.start(e.text);
+        } else {
+          controller.send(e.text);
+        }
+      });
+
+      // Surface session errors as Notice + error card so the user sees
+      // what went wrong (spawn failure, EPIPE, stdin destroyed, etc.).
+      bus.on("session.error", (e) => {
+        if (this.disposed) return;
+        // eslint-disable-next-line no-console
+        console.error("[claude-webview] session error:", e.message);
+        // Render a visible error card in the cards area.
+        const layout = this.layout;
+        if (layout) {
+          const errCard = doc.createElement("div");
+          errCard.className = "claude-wv-card claude-wv-card--result";
+          errCard.setAttribute("data-is-error", "true");
+          errCard.textContent = `Error: ${e.message}`;
+          layout.cardsEl.appendChild(errCard);
+          errCard.scrollIntoView({ behavior: "smooth" });
+        }
+      });
+
       // Phase 5b — resume fallback (SH-07). When a `--resume <sid>` spawn
       // reports a clean failure (`result.is_error=true`) OR dies with a
       // non-zero exit code before any successful result event, hydrate
       // the leaf from the local `SessionArchive` so the user still sees
-      // the prior turn context. Guarded to fire at most once per view:
-      // (a) both failure signals may arrive close in time; (b) even with
-      // a successful fallback, late-arriving stderr churn must not
-      // re-replay. The flag is also implicitly reset on `onClose` via a
-      // new view instance.
+      // the prior turn context.
       const archive = runtime.archive;
       if (resumeId !== undefined && archive) {
         const archiveRef = archive;
@@ -384,23 +411,12 @@ export class ClaudeWebviewView extends ItemView {
           runFallback();
         });
         bus.on("session.error", (e) => {
-          // Narrow fallback trigger to non-zero / null exit codes only.
-          // `handleStderrData` emits `stderr: ...` for every non-empty
-          // stderr chunk (warmup warnings, deprecation notices, rate-limit
-          // hints) — those must NOT force an archive replay on top of a
-          // live successful resume. Likewise `archive flush|append`
-          // errors and `stdin|stdout|spawn` errors are controller-local
-          // incidents, not resume failures. Only `exit: <non-zero|null>`
-          // (emitted by `handleExit`) is an unambiguous resume-path
-          // failure signal.
           const m = e.message;
           if (!m.startsWith("exit:")) return;
           if (m === "exit: 0") return;
           runFallback();
         });
       }
-
-      controller.start(undefined, resumeId);
     }
 
     this.inputBar = buildInputBar(this.layout.inputRowEl, bus);

@@ -77,3 +77,511 @@
   color: var(--text-muted);
   font-size: 11px;
 }
+
+/* ================================================================
+   Claude Webview (v0.6.0)
+   Uses Obsidian CSS variables for theme compatibility.
+   ================================================================ */
+
+/* --- Root layout --- */
+.claude-wv-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+}
+
+.claude-wv-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  flex-wrap: wrap;
+}
+
+.claude-wv-main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.claude-wv-cards {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.claude-wv-todo-side {
+  width: 240px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--background-modifier-border);
+  padding: 8px;
+  background: var(--background-secondary);
+}
+
+.claude-wv-todo-side:empty {
+  display: none;
+}
+
+.claude-wv-input-row {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+
+/* --- Input bar --- */
+.claude-wv-input-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  width: 100%;
+}
+
+.claude-wv-input {
+  flex: 1;
+  min-height: 36px;
+  max-height: 160px;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-small);
+  resize: none;
+  outline: none;
+}
+
+.claude-wv-input:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.2);
+}
+
+.claude-wv-input::placeholder {
+  color: var(--text-faint);
+}
+
+.claude-wv-send {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-weight: 600;
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.claude-wv-send:hover {
+  filter: brightness(1.1);
+}
+
+.claude-wv-send:active {
+  filter: brightness(0.95);
+}
+
+/* --- Permission dropdown --- */
+.claude-wv-permission-dropdown {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.claude-wv-permission-dropdown__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.claude-wv-permission-dropdown__select {
+  padding: 2px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+
+/* --- Status bar --- */
+.claude-wv-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.claude-wv-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+}
+
+.claude-wv-status-badge--model {
+  background: var(--background-modifier-success);
+  color: var(--text-on-accent);
+}
+
+.claude-wv-status-badge--tokens {
+  background: var(--background-modifier-hover);
+}
+
+.claude-wv-status-badge--cost {
+  background: var(--background-modifier-hover);
+}
+
+/* --- Cards (base) --- */
+.claude-wv-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: var(--background-primary);
+  overflow-x: auto;
+  word-wrap: break-word;
+}
+
+/* Card type borders */
+.claude-wv-card--assistant-text {
+  border-left: 3px solid var(--interactive-accent);
+}
+
+.claude-wv-card--assistant-tool-use {
+  border-left: 3px solid var(--text-accent);
+}
+
+.claude-wv-card--assistant-thinking {
+  border-left: 3px solid var(--text-faint);
+  opacity: 0.85;
+}
+
+.claude-wv-card--user-tool-result {
+  border-left: 3px solid var(--background-modifier-success);
+  background: var(--background-secondary);
+}
+
+.claude-wv-card--user-tool-result[data-is-error="true"] {
+  border-left-color: var(--background-modifier-error);
+}
+
+.claude-wv-card--result {
+  border-left: 3px solid var(--text-muted);
+  background: var(--background-secondary);
+}
+
+.claude-wv-card--result[data-is-error="true"] {
+  border-left-color: var(--background-modifier-error);
+}
+
+.claude-wv-card--system-init {
+  border: 1px dashed var(--background-modifier-border);
+  background: var(--background-secondary);
+  font-size: var(--font-ui-smaller);
+}
+
+.claude-wv-card--system-hook {
+  border: 1px dashed var(--background-modifier-border);
+  background: var(--background-secondary);
+  opacity: 0.6;
+  font-size: 11px;
+}
+
+.claude-wv-card--compact-boundary {
+  border: none;
+  background: none;
+  padding: 4px 0;
+  text-align: center;
+}
+
+.claude-wv-card--todo-summary {
+  border-left: 3px solid var(--text-accent);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.claude-wv-card--unknown {
+  border: 1px dashed var(--background-modifier-border);
+  opacity: 0.5;
+  font-size: 11px;
+}
+
+.claude-wv-card--edit-diff {
+  border-left: 3px solid var(--text-accent);
+}
+
+/* --- Text blocks --- */
+.claude-wv-text-block {
+  line-height: 1.6;
+}
+
+.claude-wv-text-block p {
+  margin: 0.4em 0;
+}
+
+.claude-wv-text-block code {
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+  background: var(--background-secondary);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.claude-wv-text-block pre {
+  background: var(--background-secondary);
+  padding: 8px 12px;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* --- Tool use --- */
+.claude-wv-tool-use-header {
+  font-weight: 600;
+  font-size: var(--font-ui-small);
+  margin-bottom: 4px;
+  color: var(--text-accent);
+}
+
+.claude-wv-tool-use-input {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  background: var(--background-secondary);
+  padding: 6px 10px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* --- Thinking --- */
+.claude-wv-card--assistant-thinking details {
+  cursor: pointer;
+}
+
+.claude-wv-thinking-summary {
+  font-size: var(--font-ui-smaller);
+  font-weight: 500;
+  color: var(--text-faint);
+  cursor: pointer;
+  user-select: none;
+}
+
+.claude-wv-thinking-body {
+  margin-top: 6px;
+  padding: 8px;
+  background: var(--background-secondary);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* --- Edit diff --- */
+.claude-wv-edit-diff-path {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  color: var(--text-accent);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.claude-wv-diff-body {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--background-secondary);
+  border-radius: 4px;
+  padding: 6px 10px;
+  overflow-x: auto;
+}
+
+.claude-wv-diff-line {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.claude-wv-diff-add {
+  background: rgba(0, 180, 60, 0.15);
+  color: var(--text-normal);
+}
+
+.claude-wv-diff-remove {
+  background: rgba(220, 50, 50, 0.15);
+  color: var(--text-normal);
+  text-decoration: line-through;
+  opacity: 0.8;
+}
+
+/* --- Result card (KV rows) --- */
+.claude-wv-result-row,
+.claude-wv-kv-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  font-size: var(--font-ui-smaller);
+}
+
+.claude-wv-result-key,
+.claude-wv-kv-key {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.claude-wv-result-value,
+.claude-wv-kv-value {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+}
+
+/* --- Todo panel --- */
+.claude-wv-todo-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.claude-wv-todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: var(--font-ui-smaller);
+  background: var(--background-primary);
+}
+
+.claude-wv-todo-item--pending .claude-wv-todo-status {
+  color: var(--text-faint);
+}
+
+.claude-wv-todo-item--in_progress .claude-wv-todo-status {
+  color: var(--interactive-accent);
+}
+
+.claude-wv-todo-item--completed .claude-wv-todo-status {
+  color: var(--background-modifier-success);
+  text-decoration: line-through;
+}
+
+.claude-wv-todo-status {
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 11px;
+  min-width: 20px;
+}
+
+.claude-wv-todo-content {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.claude-wv-todo-summary-body {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* --- Compact boundary --- */
+.claude-wv-compact-rule {
+  border: none;
+  border-top: 1px dashed var(--background-modifier-border);
+  margin: 4px 0;
+}
+
+.claude-wv-compact-label {
+  font-size: 10px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* --- System status spinner --- */
+.claude-wv-status-spinner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.claude-wv-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--interactive-accent);
+  animation: claude-wv-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes claude-wv-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.claude-wv-status-label {
+  font-style: italic;
+}
+
+.claude-wv-hook-json {
+  font-family: var(--font-monospace);
+  font-size: 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+/* --- Tool result body --- */
+.claude-wv-tool-result-body {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--background-secondary);
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+
+.claude-wv-tool-result-image {
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+/* --- Unknown event JSON dump --- */
+.claude-wv-unknown-json {
+  font-family: var(--font-monospace);
+  font-size: 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 100px;
+  overflow-y: auto;
+  color: var(--text-faint);
+}

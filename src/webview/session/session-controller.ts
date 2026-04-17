@@ -111,6 +111,11 @@ export class SessionController {
     activeSessionControllers.add(this);
   }
 
+  /** Whether the child process has been spawned. */
+  isStarted(): boolean {
+    return this.child !== null;
+  }
+
   /**
    * Spawn the child process.  No-op when already started or after dispose.
    * `initialText`, when non-empty, is sent as the first user turn
@@ -153,6 +158,9 @@ export class SessionController {
       this.emitError(`spawn: ${err.message}`),
     );
 
+    // With --input-format stream-json, the first user message must be
+    // written to stdin as JSONL (not as a -p argument). Send it now —
+    // the pipe buffers, so it's safe even before claude is fully ready.
     if (initialText !== undefined && initialText.length > 0) {
       this.send(initialText);
     }
