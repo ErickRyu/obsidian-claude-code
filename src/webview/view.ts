@@ -26,6 +26,11 @@ import {
   type UserToolResultRenderState,
 } from "./renderers/user-tool-result";
 import {
+  createUserTextState,
+  renderUserText,
+  type UserTextRenderState,
+} from "./renderers/user-text";
+import {
   createResultState,
   renderResult,
   type ResultRenderState,
@@ -185,6 +190,7 @@ interface RendererStates {
   readonly editDiff: EditDiffRenderState;
   readonly todoPanel: TodoPanelRenderState;
   readonly userToolResult: UserToolResultRenderState;
+  readonly userText: UserTextRenderState;
   readonly result: ResultRenderState;
   readonly systemInit: SystemInitRenderState;
   readonly systemStatus: SystemStatusRenderState;
@@ -262,6 +268,7 @@ export class ClaudeWebviewView extends ItemView {
       editDiff: createEditDiffState(),
       todoPanel: createTodoPanelState(),
       userToolResult: createUserToolResultState(),
+      userText: createUserTextState(),
       result: createResultState(),
       systemInit: createSystemInitState(),
       systemStatus: createSystemStatusState(),
@@ -512,6 +519,7 @@ export class ClaudeWebviewView extends ItemView {
         );
         return;
       case "user":
+        renderUserText(states.userText, cards, event, doc);
         renderUserToolResult(states.userToolResult, cards, event, doc);
         return;
       case "result":

@@ -257,6 +257,11 @@
 
 /* --- Cards (base) --- */
 .claude-wv-card {
+  /* flex-shrink:0 — `.claude-wv-cards` is `display:flex; flex-direction:column`,
+     so without this each card squashes vertically as more cards stack
+     (text gets clipped to 1-2 lines). Cards must keep their natural
+     content height; `.claude-wv-cards` already overflows on Y for scroll. */
+  flex-shrink: 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   padding: 10px 14px;
@@ -279,6 +284,12 @@
   opacity: 0.85;
 }
 
+.claude-wv-card--user-text {
+  border-left: 3px solid var(--interactive-accent);
+  background: var(--background-secondary);
+  margin-left: 24px;
+}
+
 .claude-wv-card--user-tool-result {
   border-left: 3px solid var(--background-modifier-success);
   background: var(--background-secondary);
@@ -291,6 +302,34 @@
 .claude-wv-card--result {
   border-left: 3px solid var(--text-muted);
   background: var(--background-secondary);
+  font-size: var(--font-ui-smaller);
+}
+
+.claude-wv-result-details > summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.claude-wv-result-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.claude-wv-result-details > summary::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 0.1s ease;
+}
+
+.claude-wv-result-details[open] > summary::before {
+  content: "▾ ";
+}
+
+.claude-wv-result-body {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--background-modifier-border);
 }
 
 .claude-wv-card--result[data-is-error="true"] {

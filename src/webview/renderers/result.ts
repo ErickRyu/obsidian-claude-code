@@ -70,7 +70,22 @@ export function renderResult(
   if (typeof event.result === "string" && event.result.length > 0) {
     rows.push(buildRow(doc, "message", event.result));
   }
-  card.replaceChildren(...rows);
+  // 2026-04-29 dogfood (Issue #3): wrap the metadata rows in a collapsed
+  // `<details>` so a one-line summary ("✓ 2.1s · $0.39 · 39 tokens") is
+  // the default presentation; users can click to expand for the full
+  // subtype/duration/cost/tokens/turns/message rows. The previous flat
+  // 5-row card created visual noise for every turn — debug-grade content
+  // bleeding into the conversation flow.
+  const details = doc.createElement("details");
+  details.classList.add("claude-wv-result-details");
+  const summary = doc.createElement("summary");
+  summary.classList.add("claude-wv-result-summary");
+  summary.textContent = formatSummary(event);
+  const body = doc.createElement("div");
+  body.classList.add("claude-wv-result-body");
+  body.replaceChildren(...rows);
+  details.replaceChildren(summary, body);
+  card.replaceChildren(details);
 
   if (isNewCard) {
     const existingChildren = Array.from(parent.children);
@@ -120,4 +135,29 @@ function formatTokens(usage: Record<string, unknown> | undefined): string {
   if (typeof inp !== "number" || !Number.isFinite(inp)) return "-";
   if (typeof out !== "number" || !Number.isFinite(out)) return "-";
   return `${inp}/${out}`;
+}
+
+/**
+ * 2026-04-29 dogfood Issue #3 — single-line summary for the collapsed
+ * result `<details>`. Format examples:
+ *   ✓ 2.1s · $0.394 · 6/39 tokens
+ *   ✗ failed · 1.2s · $0.012
+ * Falls back to "—" placeholders for fields the CLI omitted.
+ */
+function formatSummary(event: ResultEvent): string {
+  const icon = event.is_error === true ? "✗" : "✓";
+  const subtype = event.is_error === true ? "failed" : event.subtype;
+  const parts: string[] = [`${icon} ${subtype}`];
+  if (typeof event.duration_ms === "number" && Number.isFinite(event.duration_ms)) {
+    const seconds = event.duration_ms / 1000;
+    parts.push(seconds < 1 ? `${event.duration_ms}ms` : `${seconds.toFixed(1)}s`);
+  }
+  if (typeof event.total_cost_usd === "number" && Number.isFinite(event.total_cost_usd)) {
+    parts.push(`$${event.total_cost_usd.toFixed(4)}`);
+  }
+  const tokensRow = formatTokens(event.usage);
+  if (tokensRow !== "-") {
+    parts.push(`${tokensRow} tokens`);
+  }
+  return parts.join(" · ");
 }
