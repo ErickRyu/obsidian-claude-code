@@ -283,8 +283,27 @@
 }
 
 /* Card type borders */
+/* 2026-04-29 dogfood: chat-style left/right alignment so user vs Claude
+   is unambiguous at a glance. Each text card carries a small label
+   ("나" / "Claude") via ::before so even monochrome themes preserve
+   the cue. */
 .claude-wv-card--assistant-text {
-  border-left: 3px solid var(--interactive-accent);
+  border-left: 3px solid var(--text-muted);
+  border-right: none;
+  margin-right: 24px;
+  margin-left: 0;
+  position: relative;
+}
+
+.claude-wv-card--assistant-text::before {
+  content: "Claude";
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
 }
 
 .claude-wv-card--assistant-tool-use {
@@ -318,9 +337,29 @@
 }
 
 .claude-wv-card--user-text {
-  border-left: 3px solid var(--interactive-accent);
-  background: var(--background-secondary);
-  margin-left: 24px;
+  /* User-side bubble: right-aligned within cardsEl, accent background,
+     accent right border (mirrors the assistant card's left border so
+     they read as a left/right conversation pair). */
+  border-left: none;
+  border-right: 3px solid var(--interactive-accent);
+  background: rgba(var(--interactive-accent-rgb), 0.10);
+  margin-left: 48px;
+  margin-right: 0;
+  align-self: flex-end;
+  max-width: calc(100% - 48px);
+  position: relative;
+}
+
+.claude-wv-card--user-text::before {
+  content: "나";
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--interactive-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  text-align: right;
 }
 
 .claude-wv-card--user-tool-result {
