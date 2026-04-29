@@ -547,16 +547,35 @@
 }
 
 .claude-wv-diff-line {
-  display: block;
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  align-items: start;
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: break-word;
+  padding: 0 0 0 4px;
+}
+
+.claude-wv-diff-gutter {
+  user-select: none;
+  text-align: center;
+  font-weight: 600;
+  opacity: 0.7;
+  padding-right: 4px;
+}
+
+.claude-wv-diff-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding-right: 4px;
 }
 
 .claude-wv-diff-add {
   background: rgba(46, 160, 67, 0.28);
   color: var(--text-normal);
-  display: block;
-  padding: 0 4px;
+}
+
+.claude-wv-diff-add .claude-wv-diff-gutter {
+  color: rgb(46, 160, 67);
 }
 
 .claude-wv-diff-remove {
@@ -564,8 +583,11 @@
   color: var(--text-normal);
   text-decoration: line-through;
   opacity: 0.85;
-  display: block;
-  padding: 0 4px;
+}
+
+.claude-wv-diff-remove .claude-wv-diff-gutter {
+  color: rgb(248, 81, 73);
+  text-decoration: none;
 }
 
 /* --- Result card (KV rows) --- */

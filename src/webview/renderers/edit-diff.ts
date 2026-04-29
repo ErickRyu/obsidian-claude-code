@@ -138,18 +138,37 @@ function buildDiffLine(
   kind: "add" | "remove",
   text: string,
 ): HTMLElement {
+  // 2026-04-29 dogfood: previously the line text was prefixed with `+` or
+  // `-` (git-diff convention). That collided visually with markdown lines
+  // that legitimately start with `-` (bullets), `1.` (ordered list), `>`
+  // (blockquote) — `+- bullet` reads as "this is a removed bullet" when
+  // it's actually an added line whose original text starts with `-`.
+  // The line background colour already encodes add/remove unambiguously,
+  // so the textual prefix is redundant. A small gutter element on the
+  // left carries the `+`/`-` glyph for users who want the symbol — sized
+  // and coloured so it doesn't run into the content.
   const wrapper = doc.createElement("span");
   wrapper.classList.add("claude-wv-diff-line");
-  const inner = doc.createElement("span");
-  if (kind === "add") {
-    inner.classList.add("claude-wv-diff-add");
-    inner.textContent = "+" + text;
-  } else {
-    inner.classList.add("claude-wv-diff-remove");
-    inner.textContent = "-" + text;
-  }
+  wrapper.classList.add(
+    kind === "add" ? "claude-wv-diff-add" : "claude-wv-diff-remove",
+  );
+
+  const gutter = doc.createElement("span");
+  gutter.classList.add("claude-wv-diff-gutter");
+  gutter.textContent = kind === "add" ? "+" : "−";
+  // Aria: gutter is decorative; the line's role/colour conveys semantics.
+  gutter.setAttribute("aria-hidden", "true");
+
+  const content = doc.createElement("span");
+  content.classList.add("claude-wv-diff-content");
+  // Render the literal source line as-is — never prefix or escape since
+  // the diff body is wrapped in a `<pre>` and we use textContent only.
+  // Empty lines render as a blank colored row so the diff still shows
+  // line-count parity with the source.
+  content.textContent = text.length > 0 ? text : "​";
+
   const newline = doc.createTextNode("\n");
-  wrapper.replaceChildren(inner, newline);
+  wrapper.replaceChildren(gutter, content, newline);
   return wrapper;
 }
 
