@@ -80,8 +80,12 @@ function makeHarness() {
   // Inject spawn hook + settings so view.onOpen creates a real SessionController
   // against the fake spawn.
   (view as unknown as {
-    __testHooks: { spawnImpl: SpawnImpl; settings: SpawnArgsSettings };
-  }).__testHooks = { spawnImpl, settings };
+    __testHooks: {
+      spawnImpl: SpawnImpl;
+      settings: SpawnArgsSettings;
+      eagerStartForTests: boolean;
+    };
+  }).__testHooks = { spawnImpl, settings, eagerStartForTests: true };
 
   return { view, leaf, rootHost: rootHost as unknown as HTMLElement, children };
 }

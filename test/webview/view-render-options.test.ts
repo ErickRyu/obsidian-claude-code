@@ -89,6 +89,7 @@ function mountHarness(settingsBag: { showThinking: boolean }) {
     spawnImpl,
     settings: spawnArgs,
     renderOptions: () => ({ showThinking: settingsBag.showThinking }),
+    eagerStartForTests: true,
   };
   (view as unknown as { __testHooks: WebviewViewRuntime }).__testHooks = runtime;
 
@@ -184,6 +185,7 @@ describe("ClaudeWebviewView renderOptions live-toggle (Phase 4a integration)", (
     (view as unknown as { __testHooks: WebviewViewRuntime }).__testHooks = {
       spawnImpl,
       settings: spawnArgs,
+      eagerStartForTests: true,
     };
 
     await view.onOpen();

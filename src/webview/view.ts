@@ -166,6 +166,16 @@ export interface WebviewViewRuntime {
    * short-circuits its buffer logic cleanly.
    */
   readonly archive?: SessionArchive;
+  /**
+   * Test-only escape hatch for the lazy-start regression introduced in
+   * 71c4f23 (CSS styling + lazy-start spawn). When `true`, `onOpen()`
+   * eagerly calls `controller.start()` so the test harness has a
+   * spawned child immediately — matching the pre-71c4f23 contract that
+   * existing lifecycle/render tests assume. Production wiring leaves
+   * this `undefined`/`false` so the lazy-start UX (no claude spawn
+   * until the user types the first message) holds.
+   */
+  readonly eagerStartForTests?: boolean;
 }
 
 interface RendererStates {
@@ -337,6 +347,10 @@ export class ClaudeWebviewView extends ItemView {
       // For resume, start immediately (the session has prior context).
       if (resumeId !== undefined) {
         controller.start(undefined, resumeId);
+      } else if (runtime.eagerStartForTests === true) {
+        // Test-only path: pre-71c4f23 lifecycle/render tests assume a
+        // spawned child after onOpen. See WebviewViewRuntime.eagerStartForTests.
+        controller.start();
       }
 
       bus.on("ui.send", (e) => {

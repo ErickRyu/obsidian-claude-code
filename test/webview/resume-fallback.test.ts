@@ -179,6 +179,10 @@ function makeHarness(opts: {
     settings,
     resumeOnStart: opts.resumeOnStart,
     archive,
+    // Pre-71c4f23 lazy-start contract: these tests pre-date lazy-start
+    // and assume `children[0]` exists immediately after onOpen so they
+    // can simulate result/exit signals through it.
+    eagerStartForTests: true,
   };
 
   return {
