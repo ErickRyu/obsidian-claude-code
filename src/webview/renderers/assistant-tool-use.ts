@@ -58,6 +58,12 @@ export function renderAssistantToolUse(
       card.classList.add("claude-wv-card", "claude-wv-card--assistant-tool-use");
       card.setAttribute("data-tool-name", block.name);
       card.setAttribute("data-tool-use-id", block.id);
+      // 2026-04-29 dogfood Issue #2 (tool-pending): default state is
+      // "running" until a matching `user.tool_result` arrives. The CSS
+      // attaches a pulsing dot to `[data-pending="true"]` so users see
+      // long-running Bash / Read calls are in flight rather than stuck.
+      // view.ts strips this attribute when the matching tool_result lands.
+      card.setAttribute("data-pending", "true");
       state.cards.set(block.id, card);
     } else {
       // `data-tool-use-id` is the stable key; tool name could drift between

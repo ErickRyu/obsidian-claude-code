@@ -47,6 +47,17 @@ export function renderAssistantThinking(
   if (thinkingBlocks.length === 0) {
     return null;
   }
+  // 2026-04-29 dogfood: claude-opus-4-7 emits thinking blocks where
+  // `thinking` is "" (likely redacted by the model). Rendering a blank
+  // `▾ Thinking` card just confuses the user — skip until real content
+  // arrives. The msg-id keyed state.cards entry stays absent so a later
+  // re-emission with non-empty text still creates the card cleanly.
+  const joinedText = thinkingBlocks
+    .map((b) => (typeof b.thinking === "string" ? b.thinking : ""))
+    .join("\n\n");
+  if (joinedText.trim().length === 0) {
+    return null;
+  }
 
   const msgId = event.message.id;
   let card = state.cards.get(msgId) ?? null;
@@ -76,7 +87,7 @@ export function renderAssistantThinking(
 
   const body = doc.createElement("div");
   body.classList.add("claude-wv-thinking-body");
-  body.textContent = thinkingBlocks.map((block) => block.thinking).join("\n\n");
+  body.textContent = joinedText;
 
   details.replaceChildren(summary, body);
   card.replaceChildren(details);

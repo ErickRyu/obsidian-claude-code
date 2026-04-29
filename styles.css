@@ -289,6 +289,27 @@
 
 .claude-wv-card--assistant-tool-use {
   border-left: 3px solid var(--text-accent);
+  position: relative;
+}
+
+/* Pulsing dot in the top-right corner while a tool is running.
+   Cleared via `data-pending="false"` when the matching user.tool_result
+   card lands. (2026-04-29 dogfood Issue #2 — tool-pending visibility.) */
+.claude-wv-card--assistant-tool-use[data-pending="true"]::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-accent);
+  animation: claude-wv-pending-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes claude-wv-pending-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.85); }
+  50%      { opacity: 1.0; transform: scale(1.15); }
 }
 
 .claude-wv-card--assistant-thinking {

@@ -536,6 +536,32 @@ export class ClaudeWebviewView extends ItemView {
       case "user":
         renderUserText(states.userText, cards, event, doc);
         renderUserToolResult(states.userToolResult, cards, event, doc);
+        // 2026-04-29 dogfood Issue #2 (tool-pending resolved): every
+        // `tool_result` block in this user event resolves the matching
+        // `assistant.tool_use` card's pending spinner. Iterate sibling
+        // tool_use cards by `data-tool-use-id` (no querySelector — the
+        // tool id format is `toolu_<hex>` but skipping CSS.escape keeps
+        // happy-dom compatibility tight).
+        if (Array.isArray(event.message.content)) {
+          const ids = new Set<string>();
+          for (const block of event.message.content) {
+            if (block.type !== "tool_result") continue;
+            const id = block.tool_use_id;
+            if (typeof id === "string" && id.length > 0) ids.add(id);
+          }
+          if (ids.size > 0) {
+            const tucards = cards.getElementsByClassName(
+              "claude-wv-card--assistant-tool-use",
+            );
+            for (let i = 0; i < tucards.length; i++) {
+              const c = tucards[i];
+              const id = c?.getAttribute("data-tool-use-id");
+              if (id !== null && id !== undefined && ids.has(id)) {
+                c.setAttribute("data-pending", "false");
+              }
+            }
+          }
+        }
         return;
       case "result":
         renderResult(states.result, cards, event, doc);
