@@ -28,6 +28,7 @@ import {
 import {
   createUserTextState,
   renderUserText,
+  appendUserPrompt,
   type UserTextRenderState,
 } from "./renderers/user-text";
 import {
@@ -368,6 +369,14 @@ export class ClaudeWebviewView extends ItemView {
 
       bus.on("ui.send", (e) => {
         if (this.disposed) return;
+        // Client-side echo: stream-json never echoes the user's own prompt
+        // (only tool_result responses), so we mount the prompt as a card
+        // here. Without this the conversation reads as a one-sided
+        // assistant monologue (2026-04-29 dogfood Issue #2 final fix).
+        const layout = this.layout;
+        if (layout) {
+          appendUserPrompt(layout.cardsEl, e.text, doc);
+        }
         if (!controller.isStarted()) {
           // First message: spawn with the user's text as initialText.
           // This passes `-p` with the text as the prompt argument,

@@ -85,3 +85,30 @@ export function renderUserText(
   }
   return card;
 }
+
+/**
+ * Client-side echo of the user's own prompt as a card.
+ *
+ * Stream-json's `user` event only carries `tool_result` blocks (verified
+ * via fixtures + 2026-04-15 spike report) — the CLI never echoes the
+ * text the user typed. So `renderUserText` above sees nothing for plain
+ * prompts. Call `appendUserPrompt` from the input-bar's `ui.send` handler
+ * to mount the user's text directly. Each call appends a fresh card
+ * (no upsert — every prompt is its own card).
+ */
+export function appendUserPrompt(
+  parent: HTMLElement,
+  text: string,
+  doc: Document,
+): HTMLElement {
+  const card = doc.createElement("div");
+  card.classList.add("claude-wv-card", "claude-wv-card--user-text");
+  card.setAttribute("data-prompt-source", "client-echo");
+  const block = doc.createElement("div");
+  block.classList.add("claude-wv-text-block");
+  block.textContent = text;
+  card.replaceChildren(block);
+  const existingChildren = Array.from(parent.children);
+  parent.replaceChildren(...existingChildren, card);
+  return card;
+}
