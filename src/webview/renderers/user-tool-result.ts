@@ -92,19 +92,15 @@ export function renderUserToolResult(
 function renderResultBody(block: ToolResultBlock, doc: Document): HTMLElement[] {
   const out: HTMLElement[] = [];
   if (typeof block.content === "string") {
-    const pre = doc.createElement("pre");
-    pre.classList.add("claude-wv-tool-result-body");
-    pre.textContent = block.content;
-    out.push(pre);
+    out.push(...renderTextBody(block.content, block.is_error === true, doc));
     return out;
   }
   // Array content — iterate blocks.
   for (const sub of block.content) {
     if (sub.type === "text") {
-      const pre = doc.createElement("pre");
-      pre.classList.add("claude-wv-tool-result-body");
-      pre.textContent = (sub as TextBlock).text;
-      out.push(pre);
+      out.push(
+        ...renderTextBody((sub as TextBlock).text, block.is_error === true, doc),
+      );
     } else if (sub.type === "image") {
       // Image placeholder — we do not decode/render image sources inline in
       // the beta to keep the renderer injection-safe and dependency-free.
@@ -114,5 +110,42 @@ function renderResultBody(block: ToolResultBlock, doc: Document): HTMLElement[] 
       out.push(marker);
     }
   }
+  return out;
+}
+
+/**
+ * 2026-04-29 dogfood: Anthropic's tool error blocks arrive wrapped in
+ * `<tool_use_error>...</tool_use_error>` literal tags inside the text
+ * content. Strip the wrapper and surface a friendly "Tool denied" header
+ * instead of the raw XML-ish form so users get a meaningful error
+ * presentation rather than reading prompt-engineering plumbing.
+ */
+function renderTextBody(
+  raw: string,
+  isError: boolean,
+  doc: Document,
+): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  const trimmed = raw.trim();
+  const tag = "tool_use_error";
+  const open = `<${tag}>`;
+  const close = `</${tag}>`;
+  const isWrapped =
+    trimmed.startsWith(open) && trimmed.endsWith(close);
+  if (isError && isWrapped) {
+    const inner = trimmed.slice(open.length, trimmed.length - close.length).trim();
+    const header = doc.createElement("div");
+    header.classList.add("claude-wv-tool-result-error-header");
+    header.textContent = "Tool denied";
+    const body = doc.createElement("pre");
+    body.classList.add("claude-wv-tool-result-body");
+    body.textContent = inner;
+    out.push(header, body);
+    return out;
+  }
+  const pre = doc.createElement("pre");
+  pre.classList.add("claude-wv-tool-result-body");
+  pre.textContent = raw;
+  out.push(pre);
   return out;
 }

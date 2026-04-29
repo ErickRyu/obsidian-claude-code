@@ -332,6 +332,15 @@
   border-left-color: var(--background-modifier-error);
 }
 
+.claude-wv-tool-result-error-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-error);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
 .claude-wv-card--result {
   border-left: 3px solid var(--text-muted);
   background: var(--background-secondary);
@@ -491,12 +500,40 @@
 }
 
 /* --- Edit diff --- */
+.claude-wv-edit-diff-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.claude-wv-edit-diff-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.claude-wv-edit-diff-badge--edit {
+  background: rgba(46, 160, 67, 0.25);
+  color: var(--text-normal);
+}
+
+.claude-wv-edit-diff-badge--write {
+  background: rgba(208, 135, 0, 0.30);
+  color: var(--text-normal);
+}
+
 .claude-wv-edit-diff-path {
   font-family: var(--font-monospace);
   font-size: 11px;
   color: var(--text-accent);
-  margin-bottom: 6px;
   font-weight: 600;
+  word-break: break-all;
 }
 
 .claude-wv-diff-body {

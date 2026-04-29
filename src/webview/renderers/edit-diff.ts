@@ -85,9 +85,27 @@ export function renderEditDiff(
     }
     card.setAttribute("data-tool-name", block.name);
 
-    const pathEl = doc.createElement("div");
+    // 2026-04-29 dogfood: header pairs the tool name badge with the file
+    // path so users can tell Edit (line-level patch) from Write (full
+    // file replacement) at a glance. Without it the all-`+` lines from a
+    // Write call read as "diff is broken".
+    const header = doc.createElement("div");
+    header.classList.add("claude-wv-edit-diff-header");
+
+    const badge = doc.createElement("span");
+    badge.classList.add("claude-wv-edit-diff-badge");
+    badge.classList.add(
+      block.name === "Write"
+        ? "claude-wv-edit-diff-badge--write"
+        : "claude-wv-edit-diff-badge--edit",
+    );
+    badge.textContent = block.name === "Write" ? "Write · 파일 전체 대체" : "Edit";
+
+    const pathEl = doc.createElement("span");
     pathEl.classList.add("claude-wv-edit-diff-path");
     pathEl.textContent = filePath;
+
+    header.replaceChildren(badge, pathEl);
 
     const body = doc.createElement("pre");
     body.classList.add("claude-wv-diff-body");
@@ -100,7 +118,7 @@ export function renderEditDiff(
       lineNodes.push(buildDiffLine(doc, "add", line));
     }
     body.replaceChildren(...lineNodes);
-    card.replaceChildren(pathEl, body);
+    card.replaceChildren(header, body);
 
     rendered.push(card);
     if (isNewCard) {
