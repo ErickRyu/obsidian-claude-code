@@ -49,7 +49,12 @@ export default class ClaudeTerminalPlugin extends Plugin {
     // writer and write its baseline BEFORE registerView.
     this.promptWriter = new SystemPromptWriter(
       pluginDir,
-      () => this.app.vault.getName()
+      () => this.app.vault.getName(),
+      // 2026-04-29 dogfood: webview renders Claude's text via Obsidian's
+      // MarkdownRenderer, so `[[wikilink]]` resolves against the host
+      // vault without needing a vault name in the URL. Terminal mode
+      // can't open `[[…]]` on click, so it stays on the URL form.
+      () => (this.settings.uiMode === "webview" ? "wikilink" : "url"),
     );
     this.promptWriter.writeBase();
 
