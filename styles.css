@@ -469,12 +469,78 @@
 }
 
 /* --- Text blocks --- */
+/* 2026-04-29 dogfood: assistant-text now arrives as Obsidian-rendered
+   markdown (headings, lists, blockquote, wikilinks, callouts), so this
+   block needs to look like a tight reader-mode paragraph rather than a
+   monospace dump. All margins are collapsed at the boundaries so the
+   first/last child sit flush against the card border. */
 .claude-wv-text-block {
   line-height: 1.6;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.claude-wv-text-block > :first-child {
+  margin-top: 0;
+}
+
+.claude-wv-text-block > :last-child {
+  margin-bottom: 0;
 }
 
 .claude-wv-text-block p {
   margin: 0.4em 0;
+}
+
+.claude-wv-text-block h1,
+.claude-wv-text-block h2,
+.claude-wv-text-block h3,
+.claude-wv-text-block h4,
+.claude-wv-text-block h5,
+.claude-wv-text-block h6 {
+  margin: 0.8em 0 0.3em;
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.claude-wv-text-block h1 { font-size: 1.4em; }
+.claude-wv-text-block h2 { font-size: 1.25em; }
+.claude-wv-text-block h3 { font-size: 1.12em; }
+.claude-wv-text-block h4,
+.claude-wv-text-block h5,
+.claude-wv-text-block h6 { font-size: 1em; }
+
+.claude-wv-text-block ul,
+.claude-wv-text-block ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+
+.claude-wv-text-block li {
+  margin: 0.15em 0;
+}
+
+.claude-wv-text-block blockquote {
+  margin: 0.5em 0;
+  padding: 0.2em 0.8em;
+  border-left: 3px solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.claude-wv-text-block a {
+  color: var(--text-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.claude-wv-text-block a:hover {
+  color: var(--text-accent-hover);
+}
+
+.claude-wv-text-block hr {
+  margin: 0.8em 0;
+  border: none;
+  border-top: 1px solid var(--background-modifier-border);
 }
 
 .claude-wv-text-block code {
@@ -493,6 +559,28 @@
   font-family: var(--font-monospace);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.claude-wv-text-block pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.claude-wv-text-block table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+}
+
+.claude-wv-text-block th,
+.claude-wv-text-block td {
+  border: 1px solid var(--background-modifier-border);
+  padding: 4px 8px;
+}
+
+.claude-wv-text-block th {
+  background: var(--background-secondary);
+  font-weight: 600;
 }
 
 /* --- Tool use --- */

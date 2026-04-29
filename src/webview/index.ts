@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn } from "node:child_process";
-import { Notice, type Plugin } from "obsidian";
+import { MarkdownRenderer, Notice, type Plugin } from "obsidian";
 import {
   VIEW_TYPE_CLAUDE_WEBVIEW,
   COMMAND_OPEN_WEBVIEW,
@@ -178,6 +178,16 @@ export function wireWebview(
       : undefined;
     const systemPromptPath = options.getSystemPromptFilePath?.() ?? undefined;
 
+    // 2026-04-29 dogfood — Claude responses are markdown. Forward an
+    // Obsidian-aware renderer so headings/lists/`**bold**`/`[[wikilink]]`
+    // resolve correctly inside the host vault. The view itself doubles
+    // as the parent `Component` so child renderers (callouts, embeds)
+    // unmount when the leaf closes. `void` because we don't await — a
+    // failed render leaves an empty block, and the next message will
+    // try again.
+    const renderMarkdown = (text: string, el: HTMLElement): void => {
+      void MarkdownRenderer.render(plugin.app, text, el, "", view);
+    };
     const runtime: WebviewViewRuntime = {
       spawnImpl: nodeSpawn,
       settings: runtimeSettings,
@@ -186,6 +196,7 @@ export function wireWebview(
       cwd,
       mcpConfigPath,
       systemPromptPath,
+      renderMarkdown,
       // `renderOptions` is a closure over `plugin.settings` rather than a
       // snapshot — each dispatch reads the most recent saved value, so a
       // user toggling "Show Thinking" or "Show debug system events" in the

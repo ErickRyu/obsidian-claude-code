@@ -204,6 +204,14 @@ export interface WebviewViewRuntime {
    * Obsidian and what notes are open.
    */
   readonly systemPromptPath?: string;
+  /**
+   * 2026-04-29 dogfood — production wiring passes a closure that calls
+   * Obsidian's `MarkdownRenderer.render(app, text, el, "", view)` so
+   * Claude's text blocks render with formatted headings, lists, code,
+   * and clickable wikilinks. Tests omit this and the renderer falls
+   * back to plain `textContent`.
+   */
+  readonly renderMarkdown?: (text: string, el: HTMLElement) => void;
 }
 
 interface RendererStates {
@@ -230,6 +238,21 @@ export class ClaudeWebviewView extends ItemView {
   private controller: SessionController | null = null;
   private inputBar: InputBar | null = null;
   private statusBar: StatusBarHandle | null = null;
+  /**
+   * 2026-04-29 dogfood Issue #2 — stay pinned to the bottom of the cards
+   * region while streaming, but yield to the user the moment they
+   * scroll up to read history. Resets to `true` after the user scrolls
+   * back near the bottom, or after they send a new message.
+   */
+  private stickToBottom = true;
+  /**
+   * Suppresses the scroll listener while we programmatically force
+   * scrollTop in `scrollToBottom`. Without it, the synthetic scroll
+   * event fires and reads back stale geometry (because async markdown
+   * is still hydrating) which can flip `stickToBottom` to false during
+   * a normal stream tick.
+   */
+  private programmaticScroll = false;
   /**
    * Injection point for the SessionController runtime. Both production
    * (`wireWebview` in `index.ts`) and tests assign this field before
@@ -308,6 +331,22 @@ export class ClaudeWebviewView extends ItemView {
     const bus = createBus();
     this.bus = bus;
 
+    // Register the stick-to-bottom scroll listener BEFORE wiring stream
+    // events so the very first dispatch already has the listener in
+    // place. registerDomEvent ties the listener to this Component's
+    // lifecycle so onClose / plugin unload tears it down with the view.
+    this.registerDomEvent(this.layout.cardsEl, "scroll", () => {
+      if (this.programmaticScroll) return;
+      const el = this.layout?.cardsEl;
+      if (!el) return;
+      // 32px tolerance — accounts for sub-pixel rounding plus the small
+      // "almost at bottom" zone where the user clearly intends to keep
+      // following the stream. Tighter than this flickers off when the
+      // browser's smooth-scroll undershoots the exact bottom.
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      this.stickToBottom = distanceFromBottom < 32;
+    });
+
     bus.on("stream.event", (e) => {
       if (this.disposed) return;
       if (this.leaf.view !== this) return;
@@ -315,6 +354,7 @@ export class ClaudeWebviewView extends ItemView {
       const states = this.states;
       if (!layout || !states) return;
       this.dispatchStreamEvent(e.event, layout, states, doc);
+      this.scrollToBottomIfPinned();
     });
 
     const runtime = this.runtime;
@@ -406,6 +446,10 @@ export class ClaudeWebviewView extends ItemView {
         if (layout) {
           appendUserPrompt(layout.cardsEl, e.text, doc);
         }
+        // The user just sent a message — they want to see Claude's reply
+        // land at the bottom regardless of where they had scrolled.
+        this.stickToBottom = true;
+        this.scrollToBottomIfPinned();
         if (!controller.isStarted()) {
           // First message: spawn with the user's text as initialText.
           // This passes `-p` with the text as the prompt argument,
@@ -469,6 +513,11 @@ export class ClaudeWebviewView extends ItemView {
             if (this.leaf.view !== this) return;
             this.dispatchStreamEvent(ev, l, s, doc);
           }
+          // After replaying the archive, jump the user to the latest
+          // turn so they see where the prior session ended rather than
+          // staring at the first event of the resumed conversation.
+          this.stickToBottom = true;
+          this.scrollToBottomIfPinned();
         };
         bus.on("stream.event", (e) => {
           if (e.event.type !== "result") return;
@@ -522,6 +571,43 @@ export class ClaudeWebviewView extends ItemView {
     console.log("[claude-webview] view unmounted");
   }
 
+  /**
+   * Pin the scroll position to the bottom when the user hasn't scrolled
+   * up. Markdown rendering is async (Obsidian's `MarkdownRenderer.render`
+   * resolves on a microtask), so we scroll twice: once synchronously
+   * (covers plain-text content like tool_result, todo cards) and once
+   * after the next animation frame to absorb the height delta from
+   * markdown that hydrated after the first scroll.
+   */
+  private scrollToBottomIfPinned(): void {
+    if (!this.stickToBottom) return;
+    const el = this.layout?.cardsEl;
+    if (!el) return;
+    const pinNow = () => {
+      if (this.disposed) return;
+      const target = this.layout?.cardsEl;
+      if (!target) return;
+      this.programmaticScroll = true;
+      target.scrollTop = target.scrollHeight;
+      // Reset on next tick — by the time another scroll event could
+      // legitimately fire, the synthetic one we just triggered has
+      // already drained.
+      const win = target.ownerDocument?.defaultView;
+      if (win && typeof win.requestAnimationFrame === "function") {
+        win.requestAnimationFrame(() => {
+          this.programmaticScroll = false;
+        });
+      } else {
+        this.programmaticScroll = false;
+      }
+    };
+    pinNow();
+    const win = el.ownerDocument?.defaultView;
+    if (win && typeof win.requestAnimationFrame === "function") {
+      win.requestAnimationFrame(pinNow);
+    }
+  }
+
   private resolveRoot(): HTMLElement | null {
     const child: unknown = this.containerEl?.children?.[1];
     if (!child) return null;
@@ -542,9 +628,12 @@ export class ClaudeWebviewView extends ItemView {
     const renderOptions = runtime?.renderOptions?.();
     const showThinking = renderOptions?.showThinking ?? false;
     const showDebug = renderOptions?.showDebugSystemEvents ?? false;
+    const renderMarkdown = runtime?.renderMarkdown;
     switch (event.type) {
       case "assistant":
-        renderAssistantText(states.assistantText, cards, event, doc);
+        renderAssistantText(states.assistantText, cards, event, doc, {
+          renderMarkdown,
+        });
         renderAssistantToolUse(states.assistantToolUse, cards, event, doc);
         renderAssistantThinking(
           states.assistantThinking,

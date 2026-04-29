@@ -27,11 +27,25 @@ export function createAssistantTextState(): AssistantTextRenderState {
   return { cards: new Map() };
 }
 
+export interface AssistantTextRenderOptions {
+  /**
+   * 2026-04-29 dogfood: Claude responses are markdown (headings, lists,
+   * `**bold**`, `[[wikilinks]]`, fenced code). Without a renderer they read
+   * as raw source. Production wireWebview passes a closure that calls
+   * `MarkdownRenderer.render(app, text, el, "", view)` so wikilinks resolve
+   * inside the host vault and the lifecycle is owned by the view component.
+   * Tests omit this and the renderer falls back to plain `textContent` so
+   * the happy-dom suite stays Obsidian-free.
+   */
+  readonly renderMarkdown?: (text: string, el: HTMLElement) => void;
+}
+
 export function renderAssistantText(
   state: AssistantTextRenderState,
   parent: HTMLElement,
   event: AssistantEvent,
   doc: Document,
+  opts?: AssistantTextRenderOptions,
 ): HTMLElement | null {
   const textBlocks = event.message.content.filter(
     (block): block is { type: "text"; text: string } => block.type === "text",
@@ -54,7 +68,16 @@ export function renderAssistantText(
   for (const block of textBlocks) {
     const blockEl = doc.createElement("div");
     blockEl.classList.add("claude-wv-text-block");
-    blockEl.textContent = block.text;
+    if (opts?.renderMarkdown) {
+      // The host renderer is responsible for clearing `blockEl` before
+      // append; Obsidian's MarkdownRenderer.render appends to el so a
+      // re-emission of the same msg.id would otherwise pile content. We
+      // pass a fresh empty `blockEl` here every dispatch (children are
+      // built from scratch above), so the host can append safely.
+      opts.renderMarkdown(block.text, blockEl);
+    } else {
+      blockEl.textContent = block.text;
+    }
     children.push(blockEl);
   }
   card.replaceChildren(...children);
