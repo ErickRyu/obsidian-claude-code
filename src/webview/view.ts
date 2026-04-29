@@ -331,6 +331,42 @@ export class ClaudeWebviewView extends ItemView {
     const bus = createBus();
     this.bus = bus;
 
+    // 2026-04-29 dogfood: MarkdownRenderer.render emits
+    // `<a class="internal-link" data-href="...">` for `[[wikilink]]` but
+    // the click handler that resolves and opens the note only auto-
+    // attaches inside Obsidian's reading/editing views. Custom ItemView
+    // DOM has no listener — clicks are dead. Delegate from cardsEl so
+    // every wikilink (including ones rendered after this listener
+    // attaches) routes through `workspace.openLinkText`. External `http`
+    // / `obsidian://` anchors fall through to default browser handling.
+    this.registerDomEvent(this.layout.cardsEl, "click", (evt) => {
+      const start = evt.target instanceof Element ? evt.target : null;
+      if (!start) return;
+      const anchor = start.closest("a") as HTMLAnchorElement | null;
+      if (!anchor) return;
+      const isInternal =
+        anchor.classList.contains("internal-link") ||
+        anchor.hasAttribute("data-href");
+      if (!isInternal) return;
+      const linktext =
+        anchor.getAttribute("data-href") ??
+        anchor.getAttribute("href") ??
+        "";
+      if (linktext.length === 0) return;
+      // Skip protocol URLs accidentally tagged internal-link — only
+      // bare `vault/path` style or basenames go through openLinkText.
+      if (
+        linktext.startsWith("http://") ||
+        linktext.startsWith("https://") ||
+        linktext.startsWith("obsidian://")
+      ) {
+        return;
+      }
+      evt.preventDefault();
+      const newLeaf = evt.ctrlKey || evt.metaKey;
+      void this.app.workspace.openLinkText(linktext, "", newLeaf);
+    });
+
     // Register the stick-to-bottom scroll listener BEFORE wiring stream
     // events so the very first dispatch already has the listener in
     // place. registerDomEvent ties the listener to this Component's
