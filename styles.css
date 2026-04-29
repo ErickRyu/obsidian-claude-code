@@ -255,6 +255,18 @@
   background: var(--background-modifier-hover);
 }
 
+/* Build identity badge — last in header so it never crowds status info. */
+.claude-wv-version-badge {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-family: var(--font-monospace);
+  color: var(--text-faint);
+  background: transparent;
+  cursor: help;
+}
+
 /* --- Cards (base) --- */
 .claude-wv-card {
   /* flex-shrink:0 — `.claude-wv-cards` is `display:flex; flex-direction:column`,

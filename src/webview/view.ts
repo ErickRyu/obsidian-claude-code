@@ -72,6 +72,7 @@ import {
   buildStatusBar,
   type StatusBarHandle,
 } from "./ui/status-bar";
+import { buildVersionBadge } from "./ui/version-badge";
 import {
   buildPermissionDropdown,
   type PermissionDropdownSettings,
@@ -276,6 +277,11 @@ export class ClaudeWebviewView extends ItemView {
       compactBoundary: createCompactBoundaryState(),
     };
     this.statusBar = buildStatusBar(this.layout.headerEl, doc);
+    buildVersionBadge(this.layout.headerEl, {
+      version: __PLUGIN_VERSION__,
+      gitShort: __PLUGIN_GIT_SHORT__,
+      buildIso: __PLUGIN_BUILD_ISO__,
+    });
 
     const bus = createBus();
     this.bus = bus;
