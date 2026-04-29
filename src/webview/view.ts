@@ -550,14 +550,22 @@ export class ClaudeWebviewView extends ItemView {
             if (typeof id === "string" && id.length > 0) ids.add(id);
           }
           if (ids.size > 0) {
-            const tucards = cards.getElementsByClassName(
+            // Both assistant-tool-use cards (Bash/Read/Glob/etc.) and
+            // edit-diff cards (Edit/Write) share the data-tool-use-id
+            // attribute, so resolve pending state on either type.
+            const tuCards = cards.getElementsByClassName(
               "claude-wv-card--assistant-tool-use",
             );
-            for (let i = 0; i < tucards.length; i++) {
-              const c = tucards[i];
-              const id = c?.getAttribute("data-tool-use-id");
-              if (id !== null && id !== undefined && ids.has(id)) {
-                c.setAttribute("data-pending", "false");
+            const edCards = cards.getElementsByClassName(
+              "claude-wv-card--edit-diff",
+            );
+            for (const list of [tuCards, edCards]) {
+              for (let i = 0; i < list.length; i++) {
+                const c = list[i];
+                const id = c?.getAttribute("data-tool-use-id");
+                if (id !== null && id !== undefined && ids.has(id)) {
+                  c.setAttribute("data-pending", "false");
+                }
               }
             }
           }

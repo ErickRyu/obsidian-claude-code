@@ -21,6 +21,10 @@ import {
   createResultState,
   renderResult,
 } from "../../src/webview/renderers/result";
+import {
+  createEditDiffState,
+  renderEditDiff,
+} from "../../src/webview/renderers/edit-diff";
 import type {
   AssistantEvent,
   ResultEvent,
@@ -57,6 +61,7 @@ interface RenderedScene {
   parent: HTMLElement;
   systemInitCards: Map<string, HTMLElement>;
   toolUseCards: Map<string, HTMLElement>;
+  editDiffCards: Map<string, HTMLElement>;
   toolResultCards: Map<string, HTMLElement>;
   resultCards: Map<string, HTMLElement>;
 }
@@ -81,6 +86,7 @@ function renderFixture(fixtureFile: string): {
 
   const systemInitState = createSystemInitState();
   const toolUseState = createAssistantToolUseState();
+  const editDiffState = createEditDiffState();
   const toolResultState = createUserToolResultState();
   const resultState = createResultState();
 
@@ -89,6 +95,7 @@ function renderFixture(fixtureFile: string): {
       renderSystemInit(systemInitState, parent, ev as SystemInitEvent, doc);
     } else if (ev.type === "assistant") {
       renderAssistantToolUse(toolUseState, parent, ev as AssistantEvent, doc);
+      renderEditDiff(editDiffState, parent, ev as AssistantEvent, doc);
     } else if (ev.type === "user") {
       renderUserToolResult(toolResultState, parent, ev as UserEvent, doc);
     } else if (ev.type === "result") {
@@ -108,6 +115,7 @@ function renderFixture(fixtureFile: string): {
       parent,
       systemInitCards: systemInitState.cards,
       toolUseCards: toolUseState.cards,
+      editDiffCards: editDiffState.cards,
       toolResultCards: toolResultState.cards,
       resultCards: resultState.cards,
     },
@@ -158,19 +166,22 @@ describe("permission.jsonl rendering (AC 3 Sub-AC 3)", () => {
     );
   });
 
-  it("renders an assistant-tool-use card for the Write tool with the fixture's id", () => {
+  it("renders an edit-diff card for the Write tool with the fixture's id", () => {
+    // 2026-04-29 dogfood: Write/Edit are now exclusively rendered by
+    // edit-diff (assistant-tool-use skips them). The card carries the
+    // same `data-tool-use-id` and `data-tool-name` so existing
+    // correlation invariants remain intact.
     const { scene } = renderFixture(FIXTURE);
     const writeId = "toolu_01T3eLXYZkr9BYHGUQFeKQPw";
-    expect(scene.toolUseCards.has(writeId)).toBe(true);
-    const card = scene.toolUseCards.get(writeId);
+    expect(scene.toolUseCards.has(writeId)).toBe(false);
+    expect(scene.editDiffCards.has(writeId)).toBe(true);
+    const card = scene.editDiffCards.get(writeId);
     expect(card).toBeDefined();
     if (!card) return;
     expect(card.getAttribute("data-tool-name")).toBe("Write");
-    expect(card.classList.contains("claude-wv-card--assistant-tool-use")).toBe(
-      true,
-    );
-    const preview = card.querySelector(".claude-wv-tool-use-input");
-    expect((preview?.textContent ?? "").length).toBeGreaterThan(0);
+    expect(card.classList.contains("claude-wv-card--edit-diff")).toBe(true);
+    const path = card.querySelector(".claude-wv-edit-diff-path");
+    expect((path?.textContent ?? "").length).toBeGreaterThan(0);
   });
 
   it("renders a user-tool-result card correlated to the Write tool_use_id", () => {

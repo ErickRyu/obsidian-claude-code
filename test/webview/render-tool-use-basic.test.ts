@@ -161,10 +161,13 @@ describe("render-tool-use-basic (SH-02)", () => {
     doc.body.appendChild(parent);
     const state = createAssistantToolUseState();
 
-    const ev = toolUseEvent("msg_nested", "toolu_nested", "Edit", {
+    // 2026-04-29 dogfood: Edit/Write are now skipped by this renderer
+    // (rendered exclusively by edit-diff.ts). Use a Read tool with
+    // nested input to keep the deep-input preview contract testable.
+    const ev = toolUseEvent("msg_nested", "toolu_nested", "Read", {
       file_path: "/tmp/x.md",
-      old_string: "hello",
-      new_string: "world",
+      offset: 10,
+      limit: 50,
     });
     renderAssistantToolUse(
       state,
@@ -178,8 +181,8 @@ describe("render-tool-use-basic (SH-02)", () => {
       ?.querySelector(".claude-wv-tool-use-input");
     const text = preview?.textContent ?? "";
     expect(text).toContain("file_path");
-    expect(text).toContain("old_string");
-    expect(text).toContain("new_string");
+    expect(text).toContain("offset");
+    expect(text).toContain("limit");
     expect(text).not.toContain("[object Object]");
   });
 });

@@ -403,6 +403,21 @@
 
 .claude-wv-card--edit-diff {
   border-left: 3px solid var(--text-accent);
+  position: relative;
+}
+
+/* edit-diff cards share the pending-spinner contract with
+   assistant-tool-use; view.ts clears `data-pending` on both. */
+.claude-wv-card--edit-diff[data-pending="true"]::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-accent);
+  animation: claude-wv-pending-pulse 1.2s ease-in-out infinite;
 }
 
 /* --- Text blocks --- */
@@ -501,15 +516,19 @@
 }
 
 .claude-wv-diff-add {
-  background: rgba(0, 180, 60, 0.15);
+  background: rgba(46, 160, 67, 0.28);
   color: var(--text-normal);
+  display: block;
+  padding: 0 4px;
 }
 
 .claude-wv-diff-remove {
-  background: rgba(220, 50, 50, 0.15);
+  background: rgba(248, 81, 73, 0.25);
   color: var(--text-normal);
   text-decoration: line-through;
-  opacity: 0.8;
+  opacity: 0.85;
+  display: block;
+  padding: 0 4px;
 }
 
 /* --- Result card (KV rows) --- */

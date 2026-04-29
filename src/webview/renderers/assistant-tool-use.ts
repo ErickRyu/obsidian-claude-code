@@ -38,11 +38,18 @@ export function renderAssistantToolUse(
   doc: Document,
 ): HTMLElement[] {
   // TodoWrite is hoisted by `renderers/todo-panel.ts` into the layout's
-  // side panel + a compact summary card. Emitting the generic JSON preview
-  // here would double-render every TodoWrite call (SH-03 / 4b-4 gate).
+  // side panel + a compact summary card. Edit/Write are rendered by
+  // `renderers/edit-diff.ts` as a proper add/remove diff card. Emitting
+  // the generic JSON preview here would double-render those tools and
+  // bury the diff in raw input noise (2026-04-29 dogfood feedback —
+  // "diff doesn't seem to work" was actually "diff is buried under
+  // identical raw-JSON card with the same border color").
   const toolUseBlocks = event.message.content.filter(
     (block): block is ToolUseBlock =>
-      block.type === "tool_use" && block.name !== "TodoWrite",
+      block.type === "tool_use" &&
+      block.name !== "TodoWrite" &&
+      block.name !== "Edit" &&
+      block.name !== "Write",
   );
   if (toolUseBlocks.length === 0) {
     return [];

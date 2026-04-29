@@ -78,6 +78,9 @@ export function renderEditDiff(
       card = doc.createElement("div");
       card.classList.add("claude-wv-card", "claude-wv-card--edit-diff");
       card.setAttribute("data-tool-use-id", block.id);
+      // Tool-pending spinner — same contract as assistant-tool-use cards.
+      // view.ts strips this when the matching user.tool_result lands.
+      card.setAttribute("data-pending", "true");
       state.cards.set(block.id, card);
     }
     card.setAttribute("data-tool-name", block.name);

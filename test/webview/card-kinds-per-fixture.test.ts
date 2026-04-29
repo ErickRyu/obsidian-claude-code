@@ -55,6 +55,10 @@ import {
   createResultState,
   renderResult,
 } from "../../src/webview/renderers/result";
+import {
+  createEditDiffState,
+  renderEditDiff,
+} from "../../src/webview/renderers/edit-diff";
 import type {
   AssistantEvent,
   ResultEvent,
@@ -70,11 +74,12 @@ const FIXTURE_DIR = path.resolve(
   "stream-json",
 );
 
-/** The five card kinds Phase 2 renderers emit — CSS modifier suffix form. */
+/** The card kinds Phase 2 renderers emit — CSS modifier suffix form. */
 const CARD_KIND_UNIVERSE: ReadonlySet<string> = new Set([
   "system-init",
   "assistant-text",
   "assistant-tool-use",
+  "edit-diff",
   "user-tool-result",
   "result",
 ]);
@@ -107,27 +112,13 @@ const EXPECTED: ReadonlyArray<FixtureExpectation> = [
   },
   {
     fixture: "edit.jsonl",
+    // edit.jsonl uses Edit (1) + Read (1). After 2026-04-29 dogfood fix,
+    // Edit goes through edit-diff exclusively (not assistant-tool-use).
     cardKinds: new Set([
       "system-init",
       "assistant-text",
       "assistant-tool-use",
-      "user-tool-result",
-      "result",
-    ]),
-    cardCountByKind: {
-      "system-init": 1,
-      "assistant-text": 2,
-      "assistant-tool-use": 2,
-      "user-tool-result": 2,
-      result: 1,
-    },
-  },
-  {
-    fixture: "permission.jsonl",
-    cardKinds: new Set([
-      "system-init",
-      "assistant-text",
-      "assistant-tool-use",
+      "edit-diff",
       "user-tool-result",
       "result",
     ]),
@@ -135,6 +126,26 @@ const EXPECTED: ReadonlyArray<FixtureExpectation> = [
       "system-init": 1,
       "assistant-text": 2,
       "assistant-tool-use": 1,
+      "edit-diff": 1,
+      "user-tool-result": 2,
+      result: 1,
+    },
+  },
+  {
+    fixture: "permission.jsonl",
+    // permission.jsonl uses Write — now exclusively edit-diff.
+    cardKinds: new Set([
+      "system-init",
+      "assistant-text",
+      "edit-diff",
+      "user-tool-result",
+      "result",
+    ]),
+    cardCountByKind: {
+      "system-init": 1,
+      "assistant-text": 2,
+      "assistant-tool-use": 0,
+      "edit-diff": 1,
       "user-tool-result": 1,
       result: 1,
     },
@@ -253,6 +264,7 @@ function renderFixtureToCards(fixturePath: string): RenderResult {
   const sysInitState = createSystemInitState();
   const assistantTextState = createAssistantTextState();
   const assistantToolUseState = createAssistantToolUseState();
+  const editDiffState = createEditDiffState();
   const userToolResultState = createUserToolResultState();
   const resultState = createResultState();
 
@@ -260,12 +272,11 @@ function renderFixtureToCards(fixturePath: string): RenderResult {
     if (isSystemInit(ev)) {
       renderSystemInit(sysInitState, parent, ev, doc);
     } else if (isAssistant(ev)) {
-      // renderAssistantText is a no-op for tool-use-only events (returns
-      // null); renderAssistantToolUse is a no-op for text-only events
-      // (returns []). Calling both mirrors what the card-registry dispatch
-      // does at runtime.
+      // 2026-04-29: assistant-tool-use now skips Edit/Write (those go
+      // through edit-diff exclusively). Mirror view.ts dispatch order.
       renderAssistantText(assistantTextState, parent, ev, doc);
       renderAssistantToolUse(assistantToolUseState, parent, ev, doc);
+      renderEditDiff(editDiffState, parent, ev, doc);
     } else if (isUser(ev)) {
       renderUserToolResult(userToolResultState, parent, ev, doc);
     } else if (isResult(ev)) {
