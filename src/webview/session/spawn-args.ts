@@ -96,6 +96,15 @@ export interface SpawnArgsOptions {
    */
   readonly mcpConfigPath?: string;
   /**
+   * When set, `--append-system-prompt-file <path>` is appended.  This is
+   * how the plugin injects "you are running inside Obsidian, here is the
+   * active note + open notes + vault metadata" context into every Claude
+   * spawn — same mechanism the v0.5.x terminal mode uses (see
+   * `src/claude-terminal-view.ts:246`). The path must be absolute; the
+   * caller (wireWebview) resolves it from the plugin's `SystemPromptWriter`.
+   */
+  readonly systemPromptPath?: string;
+  /**
    * Explicit override for `--allowedTools`.  REPLACES (not extends) the
    * preset's tool list.  Passing `[]` produces `--allowedTools ""` (an
    * empty allow-list — Claude will prompt for every tool).  Phase 4b's
@@ -194,6 +203,7 @@ const FORBIDDEN_EXTRA_ARG_FLAGS: ReadonlySet<string> = new Set([
   "--allowedTools",
   "--allowed-tools",
   "--mcp-config",
+  "--append-system-prompt-file",
   "--resume",
   "--dangerously-skip-permissions",
 ]);
@@ -269,6 +279,19 @@ export function buildSpawnArgs(
       );
     }
     args.push("--mcp-config", options.mcpConfigPath);
+  }
+
+  // --append-system-prompt-file <path> (optional). Same absolute-path
+  // discipline as mcpConfigPath. wireWebview resolves it from the plugin's
+  // `SystemPromptWriter.getPromptFilePath()` so every webview spawn picks
+  // up the latest active-note / open-notes context.
+  if (options.systemPromptPath && options.systemPromptPath.length > 0) {
+    if (!options.systemPromptPath.startsWith("/")) {
+      throw new Error(
+        `[claude-webview] systemPromptPath must be absolute (received "${options.systemPromptPath}").`,
+      );
+    }
+    args.push("--append-system-prompt-file", options.systemPromptPath);
   }
 
   // --resume <id> (optional; empty string treated as absent).  Validate the

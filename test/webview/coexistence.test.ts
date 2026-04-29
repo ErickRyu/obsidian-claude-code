@@ -62,7 +62,21 @@ function makeHost(uiMode: UiMode): {
   registeredCommands: RegisteredCommand[];
 } {
   const plugin = new Plugin() as unknown as WebviewPluginHost;
-  plugin.settings = { uiMode };
+  // B1-NEW (2026-04-29): WebviewPluginHost.settings now carries
+  // cwdOverride + enableMcp for workspace-awareness wiring. Tests can
+  // leave them at their no-op defaults (empty cwd → vault fallback,
+  // enableMcp=false → no --mcp-config argv).
+  plugin.settings = {
+    uiMode,
+    claudePath: "claude",
+    permissionPreset: "standard",
+    extraArgs: "",
+    showThinking: false,
+    showDebugSystemEvents: false,
+    lastSessionId: "",
+    cwdOverride: "",
+    enableMcp: false,
+  };
   const registeredViews: RegisteredView[] = [];
   const registeredCommands: RegisteredCommand[] = [];
   plugin.registerView = vi.fn((type: string, factory: (leaf: WorkspaceLeaf) => unknown) => {

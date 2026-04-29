@@ -28,6 +28,21 @@ export interface WebviewPluginHost extends Plugin {
     showThinking: boolean;
     showDebugSystemEvents: boolean;
     lastSessionId: string;
+    /**
+     * B1-NEW (2026-04-29) — cwdOverride is the optional absolute path the
+     * user pinned in settings as the working directory for `claude -p`.
+     * Empty string means "use vault root" (the natural default for an
+     * Obsidian-embedded plugin). Mirrors the v0.5.x terminal-mode field.
+     */
+    cwdOverride: string;
+    /**
+     * B1-NEW (2026-04-29) — when true (v0.5.x default), every webview
+     * spawn carries `--mcp-config <path>` so claude -p loads the
+     * `obsidian-context` MCP server (active note / open notes / vault
+     * search). Toggling at runtime requires a fresh leaf — the existing
+     * child's argv was snapshotted at spawn.
+     */
+    enableMcp: boolean;
   };
   saveSettings(): Promise<void>;
 }
@@ -71,6 +86,28 @@ export interface WireWebviewOptions {
    * semantics remain the only recovery path.
    */
   readonly archiveBaseDir?: string;
+  /**
+   * B1-NEW (2026-04-29) Workspace Awareness — closure that returns the
+   * vault root absolute path (matches v0.5.x terminal-view wiring at
+   * `src/main.ts:64`). Re-evaluated per-leaf factory so a vault rename
+   * or remount picks up the latest path on the next "Open Claude
+   * Webview". Return null when the adapter is non-desktop or unknown.
+   */
+  readonly getVaultBasePath?: () => string | null;
+  /**
+   * B1-NEW — closure returning the absolute `.mcp.json` path that the
+   * plugin's McpContextBridge wrote (or null when `enableMcp=false` or
+   * setup failed). The path is resolved as `path.join(cwd, ".mcp.json")`
+   * inside the bridge; main.ts can compute it from the same cwd it used
+   * for `mcpBridge.writeMcpConfig(cwd)`.
+   */
+  readonly getMcpConfigPath?: () => string | null;
+  /**
+   * B1-NEW — closure returning the absolute `obsidian-prompt.txt` path
+   * the SystemPromptWriter owns. Same accessor pattern as terminal-view
+   * (`src/main.ts:66 () => this.promptWriter?.getPromptFilePath()`).
+   */
+  readonly getSystemPromptFilePath?: () => string | null;
 }
 
 export function wireWebview(
@@ -126,11 +163,29 @@ export function wireWebview(
       extraArgs: plugin.settings.extraArgs,
       lastSessionId: plugin.settings.lastSessionId,
     };
+    // B1-NEW (2026-04-29) Workspace Awareness — resolve cwd, mcp config,
+    // and system prompt path from the wireWebview options so each fresh
+    // leaf picks up the latest settings + plugin state. Mirrors v0.5.x
+    // terminal-view wiring (src/main.ts:64-66) so webview matches
+    // terminal's "knows it's running inside Obsidian" UX.
+    const vaultBase = options.getVaultBasePath?.() ?? null;
+    const cwd =
+      plugin.settings.cwdOverride.length > 0
+        ? plugin.settings.cwdOverride
+        : vaultBase ?? undefined;
+    const mcpConfigPath = plugin.settings.enableMcp
+      ? options.getMcpConfigPath?.() ?? undefined
+      : undefined;
+    const systemPromptPath = options.getSystemPromptFilePath?.() ?? undefined;
+
     const runtime: WebviewViewRuntime = {
       spawnImpl: nodeSpawn,
       settings: runtimeSettings,
       resumeOnStart,
       archive,
+      cwd,
+      mcpConfigPath,
+      systemPromptPath,
       // `renderOptions` is a closure over `plugin.settings` rather than a
       // snapshot — each dispatch reads the most recent saved value, so a
       // user toggling "Show Thinking" or "Show debug system events" in the

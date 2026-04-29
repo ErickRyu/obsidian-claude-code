@@ -175,6 +175,8 @@ interface MockPlugin {
     showThinking: boolean;
     showDebugSystemEvents: boolean;
     lastSessionId: string;
+    cwdOverride: string;
+    enableMcp: boolean;
   };
   registeredViews: Array<{ type: string; factory: (leaf: unknown) => unknown }>;
   registeredCommands: MinimalCommand[];
@@ -202,6 +204,8 @@ function makeMockPlugin(): MockPlugin {
       showThinking: false,
       showDebugSystemEvents: false,
       lastSessionId: "",
+      cwdOverride: "",
+      enableMcp: false,
     },
     registeredViews: [],
     registeredCommands: [],

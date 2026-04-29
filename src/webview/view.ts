@@ -183,6 +183,27 @@ export interface WebviewViewRuntime {
    * until the user types the first message) holds.
    */
   readonly eagerStartForTests?: boolean;
+  /**
+   * B1-NEW (2026-04-29) Workspace Awareness — absolute working directory
+   * for the spawned claude -p child. Falls back to the inherited process
+   * cwd when undefined (which surfaced as `cwd: /` in dogfood, hence the
+   * fix). Resolved by `wireWebview` from `cwdOverride || vaultBasePath`.
+   */
+  readonly cwd?: string;
+  /**
+   * B1-NEW — absolute `.mcp.json` path forwarded to `--mcp-config <path>`
+   * on every spawn, so claude -p loads the plugin's obsidian-context
+   * server (open notes / active note / vault search). Empty/undefined
+   * means "no plugin MCP" (user disabled `enableMcp` or setup failed).
+   */
+  readonly mcpConfigPath?: string;
+  /**
+   * B1-NEW — absolute `obsidian-prompt.txt` path forwarded to
+   * `--append-system-prompt-file <path>` on every spawn. Mirrors the
+   * v0.5.x terminal-mode wiring so Claude knows it is running inside
+   * Obsidian and what notes are open.
+   */
+  readonly systemPromptPath?: string;
 }
 
 interface RendererStates {
@@ -321,6 +342,14 @@ export class ClaudeWebviewView extends ItemView {
         bus,
         spawnImpl: runtime.spawnImpl,
         archive: runtime.archive,
+        // B1-NEW Workspace Awareness — forward the runtime-resolved paths
+        // through to every spawn so claude -p sees vault cwd + mcp config
+        // + system prompt. wireWebview resolves these closures per leaf
+        // factory, so a settings change to enableMcp / cwdOverride takes
+        // effect on the next leaf open (existing leaves keep argv snapshot).
+        cwd: runtime.cwd,
+        mcpConfigPath: runtime.mcpConfigPath,
+        systemPromptPath: runtime.systemPromptPath,
         onSessionId: (id) => {
           runtime.settings.lastSessionId = id;
           const persist = runtime.persistSettings;

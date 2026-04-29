@@ -55,6 +55,22 @@ export interface SessionControllerOptions {
   readonly spawnImpl: SpawnImpl;
   readonly cwd?: string;
   /**
+   * B1-NEW (2026-04-29) Workspace Awareness — when set, every spawn
+   * appends `--mcp-config <path>` so claude -p picks up the plugin's
+   * obsidian-context MCP server (active note / open notes / vault search).
+   * Resolved by `wireWebview` from `plugin.getMcpConfigPath()`. Absent
+   * (or empty) means the user disabled `enableMcp` in settings.
+   */
+  readonly mcpConfigPath?: string;
+  /**
+   * B1-NEW (2026-04-29) Workspace Awareness — when set, every spawn
+   * appends `--append-system-prompt-file <path>` so claude -p reads the
+   * plugin-written `obsidian-prompt.txt` containing vault name / active
+   * note / open tabs / Obsidian-runtime hints. Resolved by `wireWebview`
+   * from `plugin.getSystemPromptFilePath()`.
+   */
+  readonly systemPromptPath?: string;
+  /**
    * Phase 5a — fired the first time a `result` event arrives with a
    * non-empty `session_id`. The webview wiring uses this to persist the
    * id into `settings.lastSessionId` so a later "Resume last" command
@@ -126,10 +142,25 @@ export class SessionController {
     if (this.disposed) return;
     if (this.child) return;
 
-    const options =
-      resumeId !== undefined && resumeId.length > 0
-        ? { resumeId }
-        : {};
+    // B1-NEW: pass workspace-awareness paths through to argv on every spawn.
+    // Empty strings are treated the same as undefined inside buildSpawnArgs.
+    const options: {
+      resumeId?: string;
+      mcpConfigPath?: string;
+      systemPromptPath?: string;
+    } = {};
+    if (resumeId !== undefined && resumeId.length > 0) {
+      options.resumeId = resumeId;
+    }
+    if (this.opts.mcpConfigPath !== undefined && this.opts.mcpConfigPath.length > 0) {
+      options.mcpConfigPath = this.opts.mcpConfigPath;
+    }
+    if (
+      this.opts.systemPromptPath !== undefined &&
+      this.opts.systemPromptPath.length > 0
+    ) {
+      options.systemPromptPath = this.opts.systemPromptPath;
+    }
     const { cmd, args } = buildSpawnArgs(this.opts.settings, options);
 
     const spawnOpts: SpawnOptions = {
