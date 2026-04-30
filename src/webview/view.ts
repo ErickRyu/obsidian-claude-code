@@ -59,6 +59,7 @@ import {
 import {
   createSystemStatusState,
   renderSystemStatus,
+  clearSystemStatus,
   createSystemHookState,
   renderSystemHook,
   type SystemStatusRenderState,
@@ -765,6 +766,7 @@ export class ClaudeWebviewView extends ItemView {
         return;
       case "result":
         renderResult(states.result, cards, event, doc);
+        clearSystemStatus(states.systemStatus);
         if (this.statusBar) {
           this.statusBar.update(event);
         }

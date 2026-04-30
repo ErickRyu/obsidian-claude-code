@@ -58,6 +58,20 @@ export function renderUserToolResult(
   const newCards: HTMLElement[] = [];
   const rendered: HTMLElement[] = [];
   for (const block of toolResultBlocks) {
+    // 2026-05-01 dogfood: TodoWrite emits a `tool_result` like
+    // "Todos have been modified successfully" for every successful update.
+    // The TodoWrite summary card already conveys "todos updated (N)" + the
+    // strip shows the live state, so the success message is pure noise.
+    // Suppress it; errors still render so the user sees what failed.
+    if (block.is_error !== true && isTodoWriteToolUseId(parent, block.tool_use_id)) {
+      const stale = state.cards.get(block.tool_use_id);
+      if (stale) {
+        stale.remove();
+        state.cards.delete(block.tool_use_id);
+      }
+      continue;
+    }
+
     let card = state.cards.get(block.tool_use_id) ?? null;
     const isNewCard = card === null;
     if (card === null) {
@@ -66,14 +80,26 @@ export function renderUserToolResult(
       card.setAttribute("data-tool-use-id", block.tool_use_id);
       state.cards.set(block.tool_use_id, card);
     }
-    if (block.is_error === true) {
+    const isError = block.is_error === true;
+    if (isError) {
       card.setAttribute("data-is-error", "true");
     } else {
       card.removeAttribute("data-is-error");
     }
 
     const bodyChildren = renderResultBody(block, doc);
-    card.replaceChildren(...bodyChildren);
+
+    // 2026-05-01 dogfood: collapse result bodies by default. Long Read /
+    // Bash outputs dominated the conversation column. Errors stay open so
+    // the user can react immediately; success bodies are one click away.
+    const details = doc.createElement("details");
+    details.classList.add("claude-wv-tool-result-details");
+    if (isError) details.open = true;
+    const summary = doc.createElement("summary");
+    summary.classList.add("claude-wv-tool-result-summary");
+    summary.textContent = oneLineResultSummary(block, isError);
+    details.replaceChildren(summary, ...bodyChildren);
+    card.replaceChildren(details);
 
     rendered.push(card);
     if (isNewCard) {
@@ -87,6 +113,43 @@ export function renderUserToolResult(
   }
 
   return rendered;
+}
+
+function isTodoWriteToolUseId(parent: HTMLElement, toolUseId: string): boolean {
+  // CSS.escape isn't available in every test env (jsdom older builds); use a
+  // conservative whitelist check instead. tool_use_id is set by the CLI and
+  // matches /^[A-Za-z0-9_-]+$/ in practice (Anthropic message IDs).
+  if (!/^[A-Za-z0-9_-]+$/.test(toolUseId)) return false;
+  const selector = `.claude-wv-card--todo-summary[data-tool-use-id="${toolUseId}"]`;
+  return parent.querySelector(selector) !== null;
+}
+
+function oneLineResultSummary(block: ToolResultBlock, isError: boolean): string {
+  const flat = flattenResultText(block);
+  if (flat.length === 0) {
+    return isError ? "(error)" : "(empty)";
+  }
+  const firstLine = flat.split(/\r?\n/, 1)[0] ?? "";
+  const trimmed = firstLine.trim();
+  if (trimmed.length === 0) {
+    return isError ? "(error)" : "(empty)";
+  }
+  const max = 80;
+  const head = trimmed.length <= max ? trimmed : trimmed.slice(0, max - 1) + "…";
+  return isError ? `error: ${head}` : head;
+}
+
+function flattenResultText(block: ToolResultBlock): string {
+  if (typeof block.content === "string") return block.content;
+  const parts: string[] = [];
+  for (const sub of block.content) {
+    if (sub.type === "text") {
+      parts.push((sub as TextBlock).text);
+    } else if (sub.type === "image") {
+      parts.push("[image]");
+    }
+  }
+  return parts.join("\n");
 }
 
 function renderResultBody(block: ToolResultBlock, doc: Document): HTMLElement[] {

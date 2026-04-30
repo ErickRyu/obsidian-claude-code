@@ -102,6 +102,20 @@ export function renderTodoPanel(
     if (isNewCard) newCards.push(card);
 
     // ---- Side-panel wrapper in todoSideEl ------------------------------
+    // 2026-05-01 dogfood: a TodoWrite where every entry is `completed`
+    // (or a malformed/empty payload) means the agent finished its todo
+    // batch. Drop the wrapper from the strip so `.claude-wv-todo-side:empty`
+    // can hide it. The summary card stays in the conversation log.
+    const allDone = todos.length === 0 || todos.every((t) => t.status === "completed");
+    if (allDone) {
+      const stale = state.panelWrappers.get(block.id);
+      if (stale) {
+        stale.remove();
+        state.panelWrappers.delete(block.id);
+      }
+      continue;
+    }
+
     let wrapper = state.panelWrappers.get(block.id) ?? null;
     const isNewWrapper = wrapper === null;
     if (wrapper === null) {

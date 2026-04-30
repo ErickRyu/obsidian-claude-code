@@ -21,6 +21,7 @@ import { Window } from "happy-dom";
 import {
   createSystemStatusState,
   renderSystemStatus,
+  clearSystemStatus,
 } from "../../src/webview/renderers/system-status";
 import type { SystemStatusEvent } from "../../src/webview/parser/types";
 
@@ -77,6 +78,20 @@ describe("renderSystemStatus (SH-05)", () => {
     const spinner = spinners[0] as unknown as HTMLElement;
     expect(spinner.getAttribute("data-status")).toBe("thinking");
     expect(spinner.textContent ?? "").toContain("thinking");
+  });
+
+  it("clearSystemStatus removes the spinner regardless of CLI status emission (2026-05-01 dogfood)", () => {
+    const { doc, headerEl } = makeHeader();
+    const state = createSystemStatusState();
+    renderSystemStatus(state, headerEl, statusEvent("requesting"), doc);
+    expect(headerEl.querySelector(".claude-wv-status-spinner")).not.toBeNull();
+
+    clearSystemStatus(state);
+    expect(headerEl.querySelector(".claude-wv-status-spinner")).toBeNull();
+    expect(state.el).toBeNull();
+
+    // Idempotent — calling again on already-cleared state is a no-op.
+    expect(() => clearSystemStatus(state)).not.toThrow();
   });
 
   it("data-status is slugified (lowercase + non-alpha → '_'); display label preserves the human string", () => {

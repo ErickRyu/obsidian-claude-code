@@ -174,6 +174,97 @@ describe("render-user-tool-result (MH-04)", () => {
     expect(state.cards.size).toBe(0);
   });
 
+  it("wraps the body in a closed <details> for success and opens it for errors (2026-05-01 dogfood)", () => {
+    const window = new Window();
+    const doc = window.document;
+    const parent = doc.createElement("div");
+    doc.body.appendChild(parent);
+    const state = createUserToolResultState();
+
+    const okEv = toolResultEvent("toolu_ok", "Hello world\nsecond line");
+    renderUserToolResult(
+      state,
+      parent as unknown as HTMLElement,
+      okEv,
+      doc as unknown as Document,
+    );
+    const okCard = state.cards.get("toolu_ok");
+    const okDetails = okCard?.querySelector("details.claude-wv-tool-result-details") as HTMLDetailsElement | null;
+    expect(okDetails).not.toBeNull();
+    expect(okDetails?.open).toBe(false);
+    expect(okDetails?.querySelector("summary")?.textContent).toContain("Hello world");
+    // Body remains accessible inside the details for downstream selectors.
+    expect(okDetails?.querySelector(".claude-wv-tool-result-body")).not.toBeNull();
+
+    const errState = createUserToolResultState();
+    const errParent = doc.createElement("div");
+    doc.body.appendChild(errParent);
+    const errEv = toolResultEvent("toolu_err2", "boom", true);
+    renderUserToolResult(
+      errState,
+      errParent as unknown as HTMLElement,
+      errEv,
+      doc as unknown as Document,
+    );
+    const errCard = errState.cards.get("toolu_err2");
+    const errDetails = errCard?.querySelector("details.claude-wv-tool-result-details") as HTMLDetailsElement | null;
+    expect(errDetails).not.toBeNull();
+    expect(errDetails?.open).toBe(true);
+  });
+
+  it("suppresses TodoWrite tool_result when matching summary card is present (2026-05-01 dogfood)", () => {
+    const window = new Window();
+    const doc = window.document;
+    const parent = doc.createElement("div");
+    doc.body.appendChild(parent);
+    const state = createUserToolResultState();
+
+    // Stage a fake TodoWrite summary card with matching tool_use_id, the same
+    // way renderTodoPanel would.
+    const summaryCard = doc.createElement("div");
+    summaryCard.classList.add("claude-wv-card", "claude-wv-card--todo-summary");
+    summaryCard.setAttribute("data-tool-use-id", "toolu_todo_1");
+    summaryCard.setAttribute("data-tool-name", "TodoWrite");
+    parent.appendChild(summaryCard);
+
+    const ev = toolResultEvent("toolu_todo_1", "Todos have been modified successfully");
+    const cards = renderUserToolResult(
+      state,
+      parent as unknown as HTMLElement,
+      ev,
+      doc as unknown as Document,
+    );
+
+    expect(cards).toEqual([]);
+    expect(state.cards.has("toolu_todo_1")).toBe(false);
+    // The original summary card is untouched; no new tool-result card was added.
+    expect(parent.querySelectorAll(".claude-wv-card--user-tool-result").length).toBe(0);
+    expect(parent.children.length).toBe(1);
+  });
+
+  it("renders TodoWrite tool_result when it is an error (do not hide failures)", () => {
+    const window = new Window();
+    const doc = window.document;
+    const parent = doc.createElement("div");
+    doc.body.appendChild(parent);
+    const state = createUserToolResultState();
+
+    const summaryCard = doc.createElement("div");
+    summaryCard.classList.add("claude-wv-card", "claude-wv-card--todo-summary");
+    summaryCard.setAttribute("data-tool-use-id", "toolu_todo_err");
+    parent.appendChild(summaryCard);
+
+    const ev = toolResultEvent("toolu_todo_err", "todo write failed", true);
+    const cards = renderUserToolResult(
+      state,
+      parent as unknown as HTMLElement,
+      ev,
+      doc as unknown as Document,
+    );
+    expect(cards.length).toBe(1);
+    expect(cards[0].getAttribute("data-is-error")).toBe("true");
+  });
+
   it("multiple tool_result blocks in one event render multiple cards", () => {
     const window = new Window();
     const doc = window.document;

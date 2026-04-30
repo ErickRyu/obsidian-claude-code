@@ -78,15 +78,39 @@ export function renderAssistantToolUse(
       card.setAttribute("data-tool-name", block.name);
     }
 
-    const header = doc.createElement("div");
-    header.classList.add("claude-wv-tool-use-header");
-    header.textContent = block.name;
+    // 2026-05-01 dogfood: collapse the JSON preview by default. The verbose
+    // `<pre>` body buried the conversation; users only need the tool name +
+    // a one-line summary at a glance and can expand on demand. The closed
+    // <details> still carries the same `.claude-wv-tool-use-input` payload
+    // so existing tests that probe the pre body via querySelector continue
+    // to work.
+    const details = doc.createElement("details");
+    details.classList.add("claude-wv-tool-use-details");
+
+    const summary = doc.createElement("summary");
+    summary.classList.add("claude-wv-tool-use-summary");
+    const nameEl = doc.createElement("span");
+    nameEl.classList.add("claude-wv-tool-use-header");
+    nameEl.textContent = block.name;
+    const inputSummary = oneLineInputSummary(block.input);
+    if (inputSummary.length > 0) {
+      const sepEl = doc.createElement("span");
+      sepEl.classList.add("claude-wv-tool-use-summary-sep");
+      sepEl.textContent = " · ";
+      const hintEl = doc.createElement("span");
+      hintEl.classList.add("claude-wv-tool-use-summary-hint");
+      hintEl.textContent = inputSummary;
+      summary.replaceChildren(nameEl, sepEl, hintEl);
+    } else {
+      summary.replaceChildren(nameEl);
+    }
 
     const preview = doc.createElement("pre");
     preview.classList.add("claude-wv-tool-use-input");
     preview.textContent = formatInputPreview(block.input);
 
-    card.replaceChildren(header, preview);
+    details.replaceChildren(summary, preview);
+    card.replaceChildren(details);
     rendered.push(card);
     if (isNewCard) {
       newCards.push(card);
@@ -102,6 +126,40 @@ export function renderAssistantToolUse(
   }
 
   return rendered;
+}
+
+/**
+ * One-line hint shown next to the tool name in the collapsed `<summary>`.
+ * Picks the most identifying scalar field (file_path, command, pattern, url,
+ * path, query, …) so the user can recognize the call without expanding.
+ * Falls back to the empty string if no scalar field is present — the caller
+ * then renders just the tool name.
+ */
+function oneLineInputSummary(input: Record<string, unknown>): string {
+  const KEYS = [
+    "file_path",
+    "filePath",
+    "path",
+    "command",
+    "pattern",
+    "query",
+    "url",
+    "cwd",
+    "subagent_type",
+    "description",
+  ];
+  for (const key of KEYS) {
+    const v = input[key];
+    if (typeof v === "string" && v.length > 0) {
+      return truncate(v, 80);
+    }
+  }
+  return "";
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
 }
 
 /**

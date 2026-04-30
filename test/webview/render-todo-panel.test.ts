@@ -266,6 +266,30 @@ describe("render-todo-panel (SH-03, 4b-4 / 4b-5)", () => {
     ).toBe(true);
   });
 
+  it("removes the side-panel wrapper when all todos transition to completed (2026-05-01 dogfood)", () => {
+    const { doc, cardsEl, sideEl } = setupDom();
+    const state = createTodoPanelState();
+
+    const inProgress = todoEvent("msg_done", "toolu_done", [
+      { content: "Task A", status: "in_progress", activeForm: "A-ing" },
+      { content: "Task B", status: "pending", activeForm: "B-ing" },
+    ]);
+    renderTodoPanel(state, cardsEl, sideEl, inProgress, doc);
+    expect(sideEl.querySelectorAll(".claude-wv-todo-item").length).toBe(2);
+    expect(state.panelWrappers.size).toBe(1);
+
+    const allDone = todoEvent("msg_done", "toolu_done", [
+      { content: "Task A", status: "completed", activeForm: "A-ing" },
+      { content: "Task B", status: "completed", activeForm: "B-ing" },
+    ]);
+    renderTodoPanel(state, cardsEl, sideEl, allDone, doc);
+    // Wrapper removed → strip is empty → CSS :empty hides it.
+    expect(sideEl.children.length).toBe(0);
+    expect(state.panelWrappers.has("toolu_done")).toBe(false);
+    // Summary card stays in the conversation log.
+    expect(cardsEl.querySelectorAll(".claude-wv-card--todo-summary").length).toBe(1);
+  });
+
   it("textContent only — no HTML injection from todo content (XSS defense)", () => {
     const { doc, cardsEl, sideEl } = setupDom();
     const state = createTodoPanelState();
