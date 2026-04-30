@@ -339,33 +339,95 @@ export class ClaudeWebviewView extends ItemView {
     // every wikilink (including ones rendered after this listener
     // attaches) routes through `workspace.openLinkText`. External `http`
     // / `obsidian://` anchors fall through to default browser handling.
-    this.registerDomEvent(this.layout.cardsEl, "click", (evt) => {
+    this.registerDomEvent(
+      this.layout.cardsEl,
+      "click",
+      (evt) => {
+        // 2026-05-01 dogfood diagnostic — strip after Phase A confirms.
+        // eslint-disable-next-line no-console
+        console.log("[claude-webview] click fired, target:", evt.target);
       const start = evt.target instanceof Element ? evt.target : null;
-      if (!start) return;
+      if (!start) {
+        // eslint-disable-next-line no-console
+        console.log("[claude-webview] click: target is not Element");
+        return;
+      }
       const anchor = start.closest("a") as HTMLAnchorElement | null;
-      if (!anchor) return;
+      if (!anchor) {
+        // eslint-disable-next-line no-console
+        console.log("[claude-webview] click: no anchor ancestor");
+        return;
+      }
+      // eslint-disable-next-line no-console
+      console.log("[claude-webview] click anchor:", {
+        outer: anchor.outerHTML.slice(0, 200),
+        dataHref: anchor.getAttribute("data-href"),
+        href: anchor.getAttribute("href"),
+        cls: anchor.className,
+      });
       const isInternal =
         anchor.classList.contains("internal-link") ||
         anchor.hasAttribute("data-href");
-      if (!isInternal) return;
+      if (!isInternal) {
+        // eslint-disable-next-line no-console
+        console.log("[claude-webview] click: not internal — fall through");
+        return;
+      }
       const linktext =
         anchor.getAttribute("data-href") ??
         anchor.getAttribute("href") ??
         "";
-      if (linktext.length === 0) return;
-      // Skip protocol URLs accidentally tagged internal-link — only
-      // bare `vault/path` style or basenames go through openLinkText.
+      if (linktext.length === 0) {
+        // eslint-disable-next-line no-console
+        console.log("[claude-webview] click: empty linktext");
+        return;
+      }
       if (
         linktext.startsWith("http://") ||
         linktext.startsWith("https://") ||
         linktext.startsWith("obsidian://")
       ) {
+        // eslint-disable-next-line no-console
+        console.log("[claude-webview] click: protocol URL, skip", linktext);
         return;
       }
       evt.preventDefault();
+      // Capture-phase + stopPropagation prevents any internal
+      // MarkdownRenderer click handler from re-handling the event after
+      // our preventDefault and re-opening it as an external `_blank`
+      // (the rendered anchor carries `target="_blank"`).
+      evt.stopPropagation();
       const newLeaf = evt.ctrlKey || evt.metaKey;
-      void this.app.workspace.openLinkText(linktext, "", newLeaf);
-    });
+      // sourcePath = active file's path so wikilinks resolve relative to
+      // wherever the user was just looking. Falls back to "" (vault
+      // root context) if no file is active. Empty string was the
+      // initial guess and works for unique basenames; the active file
+      // path is more correct for unresolved/relative cases.
+      const sourcePath =
+        this.app.workspace.getActiveFile()?.path ?? "";
+      // eslint-disable-next-line no-console
+      console.log("[claude-webview] calling openLinkText", {
+        linktext,
+        sourcePath,
+        newLeaf,
+      });
+      Promise.resolve(
+        this.app.workspace.openLinkText(linktext, sourcePath, newLeaf),
+      )
+        .then(() => {
+          // eslint-disable-next-line no-console
+          console.log("[claude-webview] openLinkText resolved", linktext);
+        })
+        .catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.error("[claude-webview] openLinkText REJECTED:", err);
+        });
+      },
+      // Capture phase — fires before any listener attached to inner
+      // anchors by MarkdownRenderer.render (which may stopPropagation
+      // or otherwise pre-empt our delegated handler).
+      true,
+    );
 
     // Register the stick-to-bottom scroll listener BEFORE wiring stream
     // events so the very first dispatch already has the listener in
