@@ -2,6 +2,25 @@
 
 All notable changes to obsidian-claude-code will be documented in this file.
 
+## [0.6.0-beta.3] - 2026-05-01
+
+Pre-landing review hardening on top of beta.2. Six fixes covering security gates, lifecycle bugs, and memory caps that a multi-specialist review (Claude adversarial + Codex adversarial + security/performance/testing specialists) flagged as critical. No new user-facing surface, no public API change.
+
+### Security
+- **`extraArgs` equals-form bypass closed.** The `FORBIDDEN_EXTRA_ARG_FLAGS` guard previously matched only the split form (`--permission-mode bypassPermissions`). A user typing the equals form (`--permission-mode=bypassPermissions`) as a single token slipped past and silently escalated Safe → Full because `claude -p` accepts both forms and honors the last occurrence per flag. The guard now rejects both shapes.
+- **Forbidden flag list extended.** Added `--permission-prompt-tool` (would route permission decisions to a user-chosen MCP, neutering Safe preset), `--add-dir` (broadens FS reach beyond vault `cwd`), `--system-prompt` (replaces vault-context injection rather than appending), `--disallowed-tools` / `--disallowedTools`, and the JSONL-protocol-owned flags `--output-format`, `--input-format`, `--include-partial-messages`, `--verbose` (a user flipping `--output-format text` would silently corrupt the parser and look like a hung session). 16 new regression tests in `test/webview/spawn-args.test.ts`.
+
+### Fixed
+- **`SessionController.handleExit` now releases the dead child.** The handler previously left `this.child` set after exit, so `isStarted()` reported true and the next `controller.send()` from `view.ts:519` wrote into a destroyed stdin (silent failure — user saw no reply). The handler now nulls `child`, clears the drain queue, and only emits `session.error` for non-zero exits — `exit: 0` is normal turn completion and no longer renders a spurious red error card.
+- **Resume fallback disarms after the first signal.** `view.ts` previously left the fallback armed for the entire resumed session. A second turn's transient `result.is_error=true` or non-zero exit would replay the archive on top of live DOM, duplicating history and corrupting chronology. The fallback now disarms on the first result/exit signal of the resumed session, regardless of outcome.
+- **`LineBuffer.tail` capped at 8 MiB.** A pathological `claude -p` emission of a multi-MB single line without LF (truncated download, hung stream) would otherwise grow `tail` unbounded and freeze the Electron renderer. Overflow drops the partial and surfaces a single `session.error` so the parser self-heals.
+- **`SessionController.drainQueue` capped at 256 entries.** A stuck stdin (kernel pipe full because claude is slow to read) combined with a fast typist could OOM the renderer. The queue now drops the oldest entry on overflow and emits a one-shot `session.error` so the input bar isn't silently swallowing sends.
+
+### Verified
+- 676/676 vitest pass (660 + 16 new regression tests for `extraArgs` equals-form and the extended forbidden list)
+- `tsc --noEmit` clean
+- `npm run build` clean
+
 ## [0.6.0-beta.2] - 2026-05-01
 
 Dogfood-driven hardening of the v0.6.0-beta.1 webview foundation. No new public surface — every entry resolves a regression or omission caught while the author was using the webview daily. The webview remains opt-in (`uiMode: "webview"`); terminal users see zero behavior change.
