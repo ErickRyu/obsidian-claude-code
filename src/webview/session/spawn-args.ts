@@ -194,18 +194,39 @@ function resolveEffectiveConfig(
  * preset-driven permission flags that precede them in argv.  `claude -p`
  * honors the last occurrence per flag, so allowing the user to append
  * `--permission-mode bypassPermissions` in extraArgs would silently
- * escalate Safe → Full.  Matching is case-sensitive on the exact flag
- * token; values that follow (e.g. `bypassPermissions`) are allowed so
- * a lone word like `verbose` still works.
+ * escalate Safe → Full.  Matching covers BOTH the split form
+ * (`--flag value`) and the equals form (`--flag=value`) since claude -p
+ * accepts both. Values that follow (e.g. `bypassPermissions`) are allowed
+ * so a lone word like `verbose` still works.
+ *
+ * Categories:
+ *   - Permission/security: --permission-mode / --allowedTools / --allowed-tools /
+ *     --disallowed-tools / --disallowedTools / --dangerously-skip-permissions /
+ *     --permission-prompt-tool (redirects auth decisions to a user-chosen MCP).
+ *   - Workspace boundary: --add-dir (broadens FS reach beyond the vault cwd).
+ *   - Plugin-owned wiring: --mcp-config / --append-system-prompt-file /
+ *     --system-prompt (replace, not append) / --resume.
+ *   - Stream protocol: --output-format / --input-format /
+ *     --include-partial-messages / --verbose. A user flipping
+ *     --output-format text would silently corrupt the JSONL parser.
  */
 const FORBIDDEN_EXTRA_ARG_FLAGS: ReadonlySet<string> = new Set([
   "--permission-mode",
   "--allowedTools",
   "--allowed-tools",
+  "--disallowed-tools",
+  "--disallowedTools",
+  "--permission-prompt-tool",
+  "--dangerously-skip-permissions",
+  "--add-dir",
   "--mcp-config",
   "--append-system-prompt-file",
+  "--system-prompt",
   "--resume",
-  "--dangerously-skip-permissions",
+  "--output-format",
+  "--input-format",
+  "--include-partial-messages",
+  "--verbose",
 ]);
 
 /**
@@ -226,13 +247,28 @@ function splitExtraArgsValidated(raw: string): string[] {
   if (!raw || raw.trim().length === 0) return [];
   const tokens = raw.trim().split(/\s+/).filter((s) => s.length > 0);
   for (const t of tokens) {
-    if (FORBIDDEN_EXTRA_ARG_FLAGS.has(t)) {
+    if (isForbiddenFlag(t)) {
       throw new Error(
         `[claude-webview] extraArgs rejected: "${t}" may only be set via permission preset / structured options, not via the free-form Extra CLI arguments field.`,
       );
     }
   }
   return tokens;
+}
+
+/**
+ * Match a single extraArgs token against `FORBIDDEN_EXTRA_ARG_FLAGS` for both
+ * the split form (`--flag`) and the equals form (`--flag=value`). Without the
+ * equals branch a user typing `--permission-mode=bypassPermissions` as a
+ * single whitespace-delimited token would slip past the gate and escalate
+ * Safe → Full because claude -p honors the last occurrence per flag.
+ */
+function isForbiddenFlag(token: string): boolean {
+  if (FORBIDDEN_EXTRA_ARG_FLAGS.has(token)) return true;
+  const eq = token.indexOf("=");
+  if (eq <= 0) return false;
+  const flag = token.slice(0, eq);
+  return FORBIDDEN_EXTRA_ARG_FLAGS.has(flag);
 }
 
 /**

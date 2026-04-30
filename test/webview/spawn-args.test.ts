@@ -316,6 +316,50 @@ describe("spawn-args — preset → CLI flag integration (Sub-AC 2 of AC 11)", (
         buildSpawnArgs(fxSettings("safe", "--dangerously-skip-permissions")),
       ).toThrow(/extraArgs rejected.*dangerously-skip-permissions/);
     });
+
+    // Pre-landing review (Plan B Lifecycle+Security): the original guard only
+    // matched `--flag value` (split form). A user typing the equals form
+    // `--permission-mode=bypassPermissions` as a single token slipped past
+    // and silently escalated Safe → Full because claude -p honors both forms
+    // AND the last occurrence per flag.
+    it.each([
+      "--permission-mode=bypassPermissions",
+      "--allowedTools=Bash",
+      "--allowed-tools=Bash",
+      "--dangerously-skip-permissions=true",
+      "--mcp-config=/etc/passwd",
+      "--append-system-prompt-file=/tmp/x",
+      "--resume=00000000-0000-0000-0000-000000000000",
+    ])(
+      "rejects equals-form bypass: %s",
+      (token) => {
+        expect(() => buildSpawnArgs(fxSettings("safe", token))).toThrow(
+          /extraArgs rejected/,
+        );
+      },
+    );
+
+    // Pre-landing review (Plan B): forbidden list extended to cover flags
+    // that subvert the preset → permission contract or corrupt the JSONL
+    // protocol the parser depends on.
+    it.each([
+      "--permission-prompt-tool",
+      "--add-dir",
+      "--system-prompt",
+      "--disallowed-tools",
+      "--disallowedTools",
+      "--output-format",
+      "--input-format",
+      "--include-partial-messages",
+      "--verbose",
+    ])(
+      "rejects newly-forbidden flag in extraArgs: %s",
+      (flag) => {
+        expect(() => buildSpawnArgs(fxSettings("safe", `${flag} value`))).toThrow(
+          /extraArgs rejected/,
+        );
+      },
+    );
   });
 
   describe("error-surface discipline — unknown preset label", () => {
