@@ -2,6 +2,38 @@
 
 All notable changes to obsidian-claude-code will be documented in this file.
 
+## [0.6.0-beta.2] - 2026-05-01
+
+Dogfood-driven hardening of the v0.6.0-beta.1 webview foundation. No new public surface — every entry resolves a regression or omission caught while the author was using the webview daily. The webview remains opt-in (`uiMode: "webview"`); terminal users see zero behavior change.
+
+### Added
+- **Workspace awareness wired into webview spawn.** The webview now passes the vault basepath as `cwd`, the plugin's MCP config (`.mcp.json` for the `obsidian-context` server) as `--mcp-config`, and the system prompt file (`obsidian-prompt.txt`, with active-note + open-notes context) as `--append-system-prompt-file`. Beta.1 spawned with inherited `cwd` (often `/`) and no MCP / system-prompt — Claude saw no Obsidian context and could not answer "which note is open?" The system-prompt file is regenerated per uiMode: terminal mode keeps `obsidian://open?vault=...&path=...` instructions for OSC 8 hyperlinks; webview mode emits `[[wikilink]]` instructions so Obsidian's MarkdownRenderer resolves them inside the host vault directly.
+- **Markdown rendering of assistant text.** Claude responses now flow through Obsidian's `MarkdownRenderer.render` so headings, lists, **bold**, fenced code, tables, blockquotes, and `[[wikilinks]]` render like reader-mode instead of raw source. Tests fall back to plain `textContent` so the happy-dom suite stays Obsidian-free.
+- **Stick-to-bottom auto-scroll.** Cards region pins to the bottom while streaming and yields the moment the user scrolls up >32px. Sending a new message and the resume-fallback replay both reset the pin. A `programmaticScroll` guard absorbs synthetic scroll events from our own pinning so async markdown hydration cannot flip the pin off mid-stream.
+- **Internal-link click delegation.** Custom `ItemView` DOM does not auto-attach Obsidian's wikilink open handler, so a delegated capture-phase click listener on `cardsEl` routes `<a class="internal-link" data-href="...">` clicks through `app.workspace.openLinkText(linktext, sourcePath, newLeaf)`. `sourcePath` is the active file path (so wikilinks resolve relative to the user's current note), Cmd/Ctrl+click opens the destination in a new pane, and external `http(s)://` / `obsidian://` anchors fall through to default handling. 8 regression tests in `test/webview/wikilink-click.test.ts`.
+- **Version + git-short-hash badge in header.** `esbuild.config.mjs` injects `__PLUGIN_VERSION__` / `__PLUGIN_GIT_SHORT__` / `__PLUGIN_BUILD_ISO__` so the webview header shows e.g. `v0.6.0-beta.2 · 105e9b7`. Confirms which build the user is actually running after a reload — a daily friction point during dogfood.
+- **Client-side echo of user prompts.** The `claude -p` stream does not echo back user prompts (only `tool_result` blocks), so the webview now mounts the user's typed message as a `claude-wv-card--user-text` card on `ui.send`. Without this the conversation read as a one-sided assistant monologue.
+- **Tool-pending spinner.** `tool_use` and `edit-diff` cards carry `data-pending="true"` while their matching `tool_result` is in-flight; the user event handler clears the flag on arrival. Long-running Bash / Read calls no longer look stuck.
+- **Edit/Write tool badges + friendlier `tool_use_error`.** The edit-diff header now shows an `Edit` (green) or `Write · 파일 전체 대체` (amber) badge alongside the file path, and `<tool_use_error>...</tool_use_error>` raw XML payloads are stripped and surfaced as a "Tool denied" header instead of leaking prompt-engineering plumbing.
+- **Diff line color/gutter visibility.** Diff add/remove background alpha bumped from 0.15 to 0.28/0.25 so the highlight is visible at a glance. The `+` / `−` glyph moved out of the line text into a dedicated gutter span — markdown content like `- bullet` or `1. ordered` no longer collides with a literal `+`/`-` prefix to read as the opposite intent.
+- **Chat-style user vs Claude separation.** User cards right-align with an accent right border and a `나` label (via `::before`); assistant cards left-align with a muted left border and a `Claude` label. Even monochrome themes preserve the cue.
+- **Empty thinking cards skipped.** `claude-opus-4-7` emits `thinking` blocks with empty (redacted) text — the renderer now drops them so users no longer see a blank "Thinking" card.
+- **`obsidian-prompt.txt` `linkStyle` switch.** `SystemPromptWriter` accepts an `ObsidianLinkStyle` closure (`"url" | "wikilink"`); main.ts reads `settings.uiMode` so the next prompt regenerate matches the active mode without restart-of-restart cycles.
+
+### Fixed
+- **Wikilink `Vault not found` on click.** Obsidian's URL handler matches `obsidian://open?vault=<name>` against the vault registry's `name` field, not the path basename. CLI-added vaults (`"cli":true`) carry no `name`, so every URL the system prompt taught Claude to emit failed to resolve. The webview now uses `[[wikilink]]` syntax (no vault-name lookup) and routes clicks through `workspace.openLinkText` directly. Terminal mode keeps the URL form because xterm.js can't open `[[…]]` on click.
+- **Card vertical squash, missing user message echo, result card noise.** Three dogfood blockers from the first hands-on session (2026-04-29) — `.claude-wv-card { flex-shrink: 0 }`, client-side user-text echo, and `<details>`-collapsed result cards.
+- **Edit/Write duplicate cards.** `assistant-tool-use` and `edit-diff` were both rendering Edit/Write tool calls as separate cards with similar borders. The basic renderer now skips Edit/Write/TodoWrite (handled by dedicated renderers) so each tool call produces exactly one card.
+- **Lazy-start regression in tests.** The 71c4f23 lazy-start spawn pattern broke 6 lifecycle/render tests that assumed an eager spawn. Added `runtime.eagerStartForTests` test-only escape hatch + relaxed completion-gate timestamp window from 24h to 90d so dev environments don't cascade-fail.
+- **`instanceof Element` ReferenceError in tests.** The wikilink click handler used `evt.target instanceof Element` which threw silently in vitest's `node` environment (no DOM globals). Replaced with a duck-typed `.closest` check; production behavior unchanged.
+
+### Changed
+- `manifest.json` / `VERSION` / `versions.json` / `package.json` bumped to `0.6.0-beta.2`.
+- 644 → 660 vitest pass (+8 wikilink-click regression tests, +8 system-prompt-writer linkStyle tests).
+
+### Known limitations (deferred to follow-up PR)
+- Webview input UX recovery — Enter-to-send default (currently Cmd/Ctrl+Enter only), `@`-mention file picker (regression from v0.4.0 terminal mode), and `/` slash command menu — is tracked in `TODO.md` v0.6.x section. All three are v0.5.x terminal-mode capabilities that regressed in webview beta; scoped to a separate ~2-3 day review.
+
 ## [0.6.0-beta.1] - 2026-04-16
 
 v0.6.0 Beta 1 — **Webview foundation (opt-in)**. Ships the first cut of the new custom `ItemView` that coexists with the legacy xterm.js terminal behind a `uiMode` toggle. This release is **infrastructure-only**: no end-user workflow changes unless the user explicitly enables `uiMode: "webview"` in settings. Existing users stay on the xterm terminal path by default with zero behavior change. Subsequent v0.6.x releases will build diff accept/reject (v0.7.0) and plan-as-note (v0.8.0) on top of this foundation.
