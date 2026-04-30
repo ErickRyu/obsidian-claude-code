@@ -343,89 +343,57 @@ export class ClaudeWebviewView extends ItemView {
       this.layout.cardsEl,
       "click",
       (evt) => {
-        // 2026-05-01 dogfood diagnostic — strip after Phase A confirms.
-        // eslint-disable-next-line no-console
-        console.log("[claude-webview] click fired, target:", evt.target);
-      const start = evt.target instanceof Element ? evt.target : null;
-      if (!start) {
-        // eslint-disable-next-line no-console
-        console.log("[claude-webview] click: target is not Element");
-        return;
-      }
-      const anchor = start.closest("a") as HTMLAnchorElement | null;
-      if (!anchor) {
-        // eslint-disable-next-line no-console
-        console.log("[claude-webview] click: no anchor ancestor");
-        return;
-      }
-      // eslint-disable-next-line no-console
-      console.log("[claude-webview] click anchor:", {
-        outer: anchor.outerHTML.slice(0, 200),
-        dataHref: anchor.getAttribute("data-href"),
-        href: anchor.getAttribute("href"),
-        cls: anchor.className,
-      });
-      const isInternal =
-        anchor.classList.contains("internal-link") ||
-        anchor.hasAttribute("data-href");
-      if (!isInternal) {
-        // eslint-disable-next-line no-console
-        console.log("[claude-webview] click: not internal — fall through");
-        return;
-      }
-      const linktext =
-        anchor.getAttribute("data-href") ??
-        anchor.getAttribute("href") ??
-        "";
-      if (linktext.length === 0) {
-        // eslint-disable-next-line no-console
-        console.log("[claude-webview] click: empty linktext");
-        return;
-      }
-      if (
-        linktext.startsWith("http://") ||
-        linktext.startsWith("https://") ||
-        linktext.startsWith("obsidian://")
-      ) {
-        // eslint-disable-next-line no-console
-        console.log("[claude-webview] click: protocol URL, skip", linktext);
-        return;
-      }
-      evt.preventDefault();
-      // Capture-phase + stopPropagation prevents any internal
-      // MarkdownRenderer click handler from re-handling the event after
-      // our preventDefault and re-opening it as an external `_blank`
-      // (the rendered anchor carries `target="_blank"`).
-      evt.stopPropagation();
-      const newLeaf = evt.ctrlKey || evt.metaKey;
-      // sourcePath = active file's path so wikilinks resolve relative to
-      // wherever the user was just looking. Falls back to "" (vault
-      // root context) if no file is active. Empty string was the
-      // initial guess and works for unique basenames; the active file
-      // path is more correct for unresolved/relative cases.
-      const sourcePath =
-        this.app.workspace.getActiveFile()?.path ?? "";
-      // eslint-disable-next-line no-console
-      console.log("[claude-webview] calling openLinkText", {
-        linktext,
-        sourcePath,
-        newLeaf,
-      });
-      Promise.resolve(
-        this.app.workspace.openLinkText(linktext, sourcePath, newLeaf),
-      )
-        .then(() => {
+        // Duck-type the target: production runs in Obsidian's webview
+        // where `Element` is global, but the unit test environment is
+        // `node` (no DOM globals) so `instanceof Element` would throw a
+        // silent ReferenceError inside the event listener and skip the
+        // whole handler. Anything that exposes `.closest("a")` is good
+        // enough — this is what we'd cast to anyway.
+        const target = evt.target as
+          | { closest?: (sel: string) => HTMLAnchorElement | null }
+          | null;
+        if (!target || typeof target.closest !== "function") return;
+        const anchor = target.closest("a");
+        if (!anchor) return;
+        const isInternal =
+          anchor.classList.contains("internal-link") ||
+          anchor.hasAttribute("data-href");
+        if (!isInternal) return;
+        const linktext =
+          anchor.getAttribute("data-href") ??
+          anchor.getAttribute("href") ??
+          "";
+        if (linktext.length === 0) return;
+        // Protocol URLs accidentally tagged internal — fall through
+        // to default browser / Obsidian protocol handling.
+        if (
+          linktext.startsWith("http://") ||
+          linktext.startsWith("https://") ||
+          linktext.startsWith("obsidian://")
+        ) {
+          return;
+        }
+        evt.preventDefault();
+        // The rendered anchor carries `target="_blank"`; without
+        // stopPropagation a downstream listener could still re-open the
+        // link as an external browser tab after our preventDefault.
+        evt.stopPropagation();
+        const newLeaf = evt.ctrlKey || evt.metaKey;
+        // sourcePath = active note path so wikilinks resolve relative
+        // to wherever the user was just looking. `""` worked for unique
+        // basenames but missed nested same-name collisions during
+        // dogfood (2026-05-01).
+        const sourcePath =
+          this.app.workspace.getActiveFile()?.path ?? "";
+        Promise.resolve(
+          this.app.workspace.openLinkText(linktext, sourcePath, newLeaf),
+        ).catch((err: unknown) => {
           // eslint-disable-next-line no-console
-          console.log("[claude-webview] openLinkText resolved", linktext);
-        })
-        .catch((err: unknown) => {
-          // eslint-disable-next-line no-console
-          console.error("[claude-webview] openLinkText REJECTED:", err);
+          console.error("[claude-webview] openLinkText failed:", err);
         });
       },
-      // Capture phase — fires before any listener attached to inner
-      // anchors by MarkdownRenderer.render (which may stopPropagation
-      // or otherwise pre-empt our delegated handler).
+      // Capture phase — fires before any listener MarkdownRenderer
+      // may have attached to the anchor itself.
       true,
     );
 
