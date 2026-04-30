@@ -549,16 +549,21 @@ export class ClaudeWebviewView extends ItemView {
       // non-zero exit code before any successful result event, hydrate
       // the leaf from the local `SessionArchive` so the user still sees
       // the prior turn context.
+      //
+      // Disarm contract: the fallback is meaningful ONLY on the FIRST
+      // result/exit signal of the resumed session. Once a successful
+      // first result lands (or any first signal at all), we lock the
+      // gate — a later turn's transient `result.is_error=true` or
+      // non-zero exit must NOT replay the archive on top of live DOM
+      // (review HIGH: would duplicate history and corrupt chronology).
       const archive = runtime.archive;
       if (resumeId !== undefined && archive) {
         const archiveRef = archive;
         const resumeSid = resumeId;
-        let fallbackTriggered = false;
+        let firstSignalConsumed = false;
         const runFallback = (): void => {
           if (this.disposed) return;
           if (this.leaf.view !== this) return;
-          if (fallbackTriggered) return;
-          fallbackTriggered = true;
           let events: StreamEvent[];
           try {
             events = archiveRef.load(resumeSid);
@@ -586,14 +591,17 @@ export class ClaudeWebviewView extends ItemView {
           this.scrollToBottomIfPinned();
         };
         bus.on("stream.event", (e) => {
+          if (firstSignalConsumed) return;
           if (e.event.type !== "result") return;
-          if (e.event.is_error !== true) return;
-          runFallback();
+          firstSignalConsumed = true;
+          if (e.event.is_error === true) runFallback();
         });
         bus.on("session.error", (e) => {
+          if (firstSignalConsumed) return;
           const m = e.message;
           if (!m.startsWith("exit:")) return;
           if (m === "exit: 0") return;
+          firstSignalConsumed = true;
           runFallback();
         });
       }

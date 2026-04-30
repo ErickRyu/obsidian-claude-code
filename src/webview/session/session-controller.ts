@@ -29,12 +29,21 @@
  * behind.
  */
 import type { ChildProcess, SpawnOptions } from "node:child_process";
-import { LineBuffer } from "../parser/line-buffer";
+import { LineBuffer, TAIL_OVERFLOW_MARKER } from "../parser/line-buffer";
 import { parseLine } from "../parser/stream-json-parser";
 import type { StreamEvent } from "../parser/types";
 import type { Bus } from "../event-bus";
 import { buildSpawnArgs, type SpawnArgsSettings } from "./spawn-args";
 import type { SessionArchive } from "./session-archive";
+
+/**
+ * Cap the in-memory drain queue so a stuck stdin (kernel pipe full because
+ * claude is slow to read) cannot OOM the renderer when a user pastes a long
+ * prompt or types fast. 256 queued user turns is well above any healthy
+ * conversational pace; once the cap trips we drop the oldest entry and
+ * surface a single session.error so the UI is not silent about the loss.
+ */
+const MAX_DRAIN_QUEUE_ENTRIES = 256;
 
 /**
  * The spawn function the controller calls.  The production wiring passes
@@ -221,6 +230,16 @@ export class SessionController {
     const payload = encodeUserTurn(text);
 
     if (this.awaitingDrain) {
+      if (this.drainQueue.length >= MAX_DRAIN_QUEUE_ENTRIES) {
+        // Drop oldest, keep newest — the UI assumes the user's most recent
+        // intent matters most. One-shot session.error so the user knows
+        // backpressure dropped a message; without this the input bar would
+        // silently swallow the send.
+        this.drainQueue.shift();
+        this.emitError(
+          `backpressure: drainQueue exceeded ${MAX_DRAIN_QUEUE_ENTRIES} entries — dropped oldest pending message`,
+        );
+      }
       this.drainQueue.push(payload);
       return;
     }
@@ -260,6 +279,15 @@ export class SessionController {
     if (this.disposed) return;
     const lines = this.lineBuffer.feed(chunk);
     for (const line of lines) {
+      if (line === TAIL_OVERFLOW_MARKER) {
+        // Pathological multi-MB single line dropped by the buffer — surface
+        // it once to the UI rather than silently OOM. Continue processing
+        // subsequent lines normally; the parser self-heals after the drop.
+        this.emitError(
+          "stdout: dropped oversized partial line (no LF within memory cap)",
+        );
+        continue;
+      }
       const parsed = parseLine(line);
       if (parsed.ok) {
         this.notifySessionIdIfNew(parsed.event);
@@ -361,7 +389,7 @@ export class SessionController {
   private handleExit(code: number | null): void {
     if (this.disposed) return;
     const tail = this.lineBuffer.flush();
-    if (tail !== null) {
+    if (tail !== null && tail !== TAIL_OVERFLOW_MARKER) {
       const parsed = parseLine(tail);
       if (parsed.ok) {
         this.notifySessionIdIfNew(parsed.event);
@@ -369,10 +397,21 @@ export class SessionController {
         this.opts.bus.emit({ kind: "stream.event", event: parsed.event });
       }
     }
-    this.opts.bus.emit({
-      kind: "session.error",
-      message: `exit: ${code === null ? "null" : String(code)}`,
-    });
+    // Release the dead child reference so `isStarted()` reports false and
+    // the next ui.send respawns instead of writing into a destroyed stdin.
+    // Without this, view.ts:519 takes the `controller.send()` branch and
+    // writes JSON into a closed pipe (silent failure, user sees no reply).
+    this.child = null;
+    this.drainQueue.length = 0;
+    this.awaitingDrain = false;
+    // exit:0 is normal completion of a turn — emitting it as session.error
+    // would render a spurious red card in the UI on every successful close.
+    if (code !== 0) {
+      this.opts.bus.emit({
+        kind: "session.error",
+        message: `exit: ${code === null ? "null" : String(code)}`,
+      });
+    }
   }
 
   private emitError(message: string): void {
