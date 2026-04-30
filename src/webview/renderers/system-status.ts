@@ -79,6 +79,23 @@ export function renderSystemStatus(
   el.replaceChildren(label, dot);
 }
 
+/**
+ * 2026-05-01 dogfood: turn-end clearer for the header status spinner.
+ *
+ * The CLI is supposed to emit a `system.status` event with `status: null`
+ * when a request completes, but in practice it sometimes leaves the last
+ * "requesting" status hanging — the dot then pulses indefinitely while the
+ * webview is idle. `view.ts` calls this on every `result` event so the
+ * spinner is unambiguously cleared at turn end regardless of CLI behavior.
+ * No-op when the spinner is already absent.
+ */
+export function clearSystemStatus(state: SystemStatusRenderState): void {
+  if (state.el !== null) {
+    state.el.remove();
+    state.el = null;
+  }
+}
+
 function slugifyStatus(s: string): string {
   return s
     .toLowerCase()

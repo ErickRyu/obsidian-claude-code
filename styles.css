@@ -121,12 +121,16 @@
   gap: 8px;
 }
 
+/* 2026-05-01 dogfood: Todo strip moved from a 240px right column inside
+   `main` to a horizontal strip between `main` and `inputRowEl`. The :empty
+   rule below auto-hides the strip when no TodoWrite has fired or when
+   todo-panel.ts removes wrappers (all todos completed). */
 .claude-wv-todo-side {
-  width: 240px;
   flex-shrink: 0;
+  max-height: 30vh;
   overflow-y: auto;
-  border-left: 1px solid var(--background-modifier-border);
-  padding: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
 }
 
@@ -587,8 +591,49 @@
 .claude-wv-tool-use-header {
   font-weight: 600;
   font-size: var(--font-ui-small);
-  margin-bottom: 4px;
   color: var(--text-accent);
+}
+
+/* 2026-05-01 dogfood: collapsed-by-default tool_use card. Summary mirrors
+   the existing `.claude-wv-result-details` chevron treatment so the whole
+   card area reads consistently. */
+.claude-wv-tool-use-details > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.claude-wv-tool-use-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.claude-wv-tool-use-details > summary::before {
+  content: "▸ ";
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.claude-wv-tool-use-details[open] > summary::before {
+  content: "▾ ";
+}
+
+.claude-wv-tool-use-details[open] > summary {
+  margin-bottom: 4px;
+}
+
+.claude-wv-tool-use-summary-sep,
+.claude-wv-tool-use-summary-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-family: var(--font-monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .claude-wv-tool-use-input {
@@ -835,6 +880,39 @@
 }
 
 /* --- Tool result body --- */
+/* 2026-05-01 dogfood: tool result wrapped in <details> (open on error). */
+.claude-wv-tool-result-details > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-family: var(--font-monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.claude-wv-tool-result-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.claude-wv-tool-result-details > summary::before {
+  content: "▸ ";
+}
+
+.claude-wv-tool-result-details[open] > summary::before {
+  content: "▾ ";
+}
+
+.claude-wv-tool-result-details[open] > summary {
+  margin-bottom: 4px;
+}
+
+.claude-wv-card--user-tool-result[data-is-error="true"] .claude-wv-tool-result-details > summary {
+  color: var(--text-error);
+}
+
 .claude-wv-tool-result-body {
   font-family: var(--font-monospace);
   font-size: 12px;

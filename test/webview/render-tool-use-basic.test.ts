@@ -154,6 +154,40 @@ describe("render-tool-use-basic (SH-02)", () => {
     expect(parent.children.length).toBe(0);
   });
 
+  it("wraps the input preview in a closed <details> with a one-line summary (2026-05-01 dogfood)", () => {
+    const window = new Window();
+    const doc = window.document;
+    const parent = doc.createElement("div");
+    doc.body.appendChild(parent);
+    const state = createAssistantToolUseState();
+
+    const ev = toolUseEvent("msg_collapse", "toolu_collapse", "Read", {
+      file_path: "/Users/x/notes/weekly.md",
+    });
+    renderAssistantToolUse(
+      state,
+      parent as unknown as HTMLElement,
+      ev,
+      doc as unknown as Document,
+    );
+
+    const card = state.cards.get("toolu_collapse");
+    expect(card).toBeDefined();
+    const details = card?.querySelector("details.claude-wv-tool-use-details") as HTMLDetailsElement | null;
+    expect(details).not.toBeNull();
+    expect(details?.open).toBe(false);
+
+    const summary = details?.querySelector("summary");
+    expect(summary).not.toBeNull();
+    const summaryText = summary?.textContent ?? "";
+    expect(summaryText).toContain("Read");
+    expect(summaryText).toContain("/Users/x/notes/weekly.md");
+
+    // The pre payload still exists inside the details.
+    const preview = details?.querySelector(".claude-wv-tool-use-input");
+    expect(preview).not.toBeNull();
+  });
+
   it("formats deeply-nested input JSON as a readable preview", () => {
     const window = new Window();
     const doc = window.document;

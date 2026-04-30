@@ -2,6 +2,23 @@
 
 All notable changes to obsidian-claude-code will be documented in this file.
 
+## [0.6.1] - 2026-05-01
+
+First stable v0.6.x release. Three dogfood-driven UI fixes on top of beta.3 — the webview now stops drowning the conversation in tool plumbing, the Todo strip cleans up after itself, and the header status indicator stops pulsing during idle. No public API change.
+
+### Changed
+- **Tool calls and tool results collapse by default.** `Read`, `Bash`, and other generic tool cards now render as a single-line `<details>` summary (`Read · /path/to/file`, `Bash · ls -la`) and expand on click. Previously the JSON input preview and the result body were always-open `<pre>` blocks that buried the conversation under one screenful per tool call. Errors stay open by default so the user reacts immediately. The summary line picks the most identifying scalar field (`file_path`, `command`, `pattern`, `query`, `url`, …) so a glance reads the call without expanding.
+- **TodoWrite success result hidden.** The `tool_result` for a successful `TodoWrite` (`"Todos have been modified successfully"`) was a noise card right after the `→ todos updated (N)` summary card. The user-tool-result renderer now skips it when a matching summary card is present in the same `cardsEl`. Errors still render so failed updates are visible.
+- **Todo panel moved from right-side column to bottom strip.** Beta.1–beta.3 carved a 240 px right column off `main` for the live todo list. Obsidian sidebars are narrow; that 240 px noticeably squashed every assistant card. The panel is now a horizontal strip between the cards area and the input bar, capped at `max-height: 30vh`. Same auto-hide via the existing `.claude-wv-todo-side:empty` rule.
+- **Todo strip auto-hides when all todos are completed.** `renderTodoPanel` now removes the side-panel wrapper from the DOM (and from `state.panelWrappers`) when the latest TodoWrite payload is empty or every entry is `completed`. The summary card stays in the conversation log for history; only the live strip disappears. A subsequent TodoWrite with new pending items recreates the wrapper as before.
+
+### Fixed
+- **Header `requesting ●` spinner stops pulsing on turn end.** The CLI is supposed to emit a `system.status` event with `status: null` when a request completes, but in practice it sometimes leaves the last `requesting` status hanging — the dot then pulsed indefinitely while the webview was idle. The view now calls `clearSystemStatus(states.systemStatus)` on every `result` event so the spinner is unambiguously cleared at turn end regardless of CLI behavior.
+
+### Verified
+- 682/682 vitest pass (676 + 6 new regression tests for collapsed details, TodoWrite suppression, todo auto-hide, and `clearSystemStatus`)
+- `npm run build` clean (572 KB main.js)
+
 ## [0.6.0-beta.3] - 2026-05-01
 
 Pre-landing review hardening on top of beta.2. Six fixes covering security gates, lifecycle bugs, and memory caps that a multi-specialist review (Claude adversarial + Codex adversarial + security/performance/testing specialists) flagged as critical. No new user-facing surface, no public API change.

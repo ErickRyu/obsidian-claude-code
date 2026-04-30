@@ -33,17 +33,23 @@ export function buildLayout(root: HTMLElement): WebviewLayout {
   const cardsEl = doc.createElement("div");
   cardsEl.className = "claude-wv-cards";
 
+  // 2026-05-01 dogfood: moved from a 240px right-side column inside `main`
+  // to a horizontal strip between `main` and `inputRowEl`. Obsidian sidebars
+  // are narrow; carving 240px off the chat area noticeably squashed every
+  // assistant card. The strip auto-hides via `.claude-wv-todo-side:empty`
+  // when no TodoWrite has fired yet OR when todo-panel.ts removes the
+  // wrapper after all todos completed (see renderers/todo-panel.ts).
   const todoSideEl = doc.createElement("div");
   todoSideEl.className = "claude-wv-todo-side";
   todoSideEl.setAttribute("aria-label", "Claude todo panel");
 
-  main.replaceChildren(cardsEl, todoSideEl);
+  main.replaceChildren(cardsEl);
 
   const inputRowEl = doc.createElement("div");
   inputRowEl.className = "claude-wv-input-row";
   inputRowEl.setAttribute("role", "group");
 
-  root.replaceChildren(headerEl, main, inputRowEl);
+  root.replaceChildren(headerEl, main, todoSideEl, inputRowEl);
 
   return { headerEl, cardsEl, todoSideEl, inputRowEl };
 }
