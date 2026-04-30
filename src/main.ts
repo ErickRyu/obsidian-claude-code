@@ -18,6 +18,7 @@ import { ensureNodePty } from "./native-bootstrap";
 import { McpContextBridge } from "./mcp-server";
 import { SystemPromptWriter } from "./system-prompt-writer";
 import { EmissionMetrics } from "./emission-metrics";
+import { wireWebview } from "./webview";
 
 export default class ClaudeTerminalPlugin extends Plugin {
   settings: ClaudeTerminalSettings = DEFAULT_SETTINGS;
@@ -48,7 +49,12 @@ export default class ClaudeTerminalPlugin extends Plugin {
     // writer and write its baseline BEFORE registerView.
     this.promptWriter = new SystemPromptWriter(
       pluginDir,
-      () => this.app.vault.getName()
+      () => this.app.vault.getName(),
+      // 2026-04-29 dogfood: webview renders Claude's text via Obsidian's
+      // MarkdownRenderer, so `[[wikilink]]` resolves against the host
+      // vault without needing a vault name in the URL. Terminal mode
+      // can't open `[[…]]` on click, so it stays on the URL form.
+      () => (this.settings.uiMode === "webview" ? "wikilink" : "url"),
     );
     this.promptWriter.writeBase();
 
@@ -65,6 +71,35 @@ export default class ClaudeTerminalPlugin extends Plugin {
         () => this.promptWriter?.getPromptFilePath() ?? null,
         () => this.emissionMetrics
       );
+    });
+
+    // Phase 0: conditionally register Claude Webview (opt-in via settings.uiMode).
+    // When uiMode === "terminal" this is a no-op — existing users see zero change.
+    wireWebview(this, {
+      // Phase 5b — resume fallback archive. Co-locates with the plugin's
+      // own data dir so it rides along with vault backups. The directory
+      // is created lazily on first `append()` — no pre-flight mkdir.
+      archiveBaseDir: path.join(this.getPluginDir(), "archives"),
+      // B1-NEW (2026-04-29) Workspace Awareness — closures so each fresh
+      // leaf factory picks up the current vault path + MCP / prompt file
+      // state. Same pattern as the terminal-view wiring above (line ~64).
+      getVaultBasePath: () => {
+        const v = this.getVaultBasePath();
+        return v.length > 0 ? v : null;
+      },
+      getMcpConfigPath: () => {
+        // McpContextBridge writes `<cwd>/.mcp.json`. Use the same cwd
+        // resolution as setupMcp() so the path the bridge wrote and the
+        // path the webview reads match. Returns null when the bridge is
+        // not active (enableMcp=false or setup failed).
+        if (!this.mcpBridge) return null;
+        const vaultPath = this.getVaultBasePath();
+        if (!vaultPath) return null;
+        const cwd = this.settings.cwdOverride || vaultPath;
+        return path.join(cwd, ".mcp.json");
+      },
+      getSystemPromptFilePath: () =>
+        this.promptWriter?.getPromptFilePath() ?? null,
     });
 
     // Track last active leaves for focus toggle and send target

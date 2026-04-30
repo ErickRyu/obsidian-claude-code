@@ -1,0 +1,367 @@
+// spike/webview-proto.ts — minimum stream-json renderer, isolated from xterm.js view.
+// Not production code. Goal: prove we can spawn `claude -p --output-format=stream-json`,
+// parse JSONL, and render an assistant text reply as a markdown card.
+
+import {
+  ItemView,
+  MarkdownRenderer,
+  Notice,
+  WorkspaceLeaf,
+  type App,
+} from "obsidian";
+import { spawn, type ChildProcess } from "child_process";
+
+export const VIEW_TYPE_WEBVIEW_PROTO = "webview-proto-view";
+export const COMMAND_OPEN_WEBVIEW_PROTO = "open-webview-proto";
+
+type StreamEvent =
+  | { type: "system"; subtype: string; [k: string]: unknown }
+  | { type: "user"; message: { role: "user"; content: unknown }; [k: string]: unknown }
+  | {
+      type: "assistant";
+      message: {
+        id: string;
+        role: "assistant";
+        model: string;
+        content: AssistantBlock[];
+        stop_reason: string | null;
+        usage?: unknown;
+      };
+      session_id: string;
+      uuid: string;
+      [k: string]: unknown;
+    }
+  | { type: "rate_limit_event"; rate_limit_info: unknown; [k: string]: unknown }
+  | { type: "result"; subtype: string; result?: string; [k: string]: unknown }
+  | { type: string; [k: string]: unknown };
+
+type AssistantBlock =
+  | { type: "text"; text: string }
+  | { type: "thinking"; thinking: string; signature: string }
+  | { type: "tool_use"; id: string; name: string; input: unknown; caller?: unknown };
+
+interface ProtoOptions {
+  getClaudePath: () => string;
+  getCwd: () => string;
+}
+
+export class WebviewProtoView extends ItemView {
+  private inputEl!: HTMLTextAreaElement;
+  private sendBtn!: HTMLButtonElement;
+  private cardsEl!: HTMLDivElement;
+  private statusEl!: HTMLDivElement;
+  private child: ChildProcess | null = null;
+  private stdoutBuffer = "";
+  // Collect content blocks keyed by assistant message.id so streaming chunks merge.
+  private messageCards = new Map<string, HTMLDivElement>();
+
+  constructor(leaf: WorkspaceLeaf, private readonly opts: ProtoOptions) {
+    super(leaf);
+  }
+
+  getViewType(): string {
+    return VIEW_TYPE_WEBVIEW_PROTO;
+  }
+
+  getDisplayText(): string {
+    return "Claude Webview (proto)";
+  }
+
+  getIcon(): string {
+    return "message-square";
+  }
+
+  async onOpen(): Promise<void> {
+    const container = this.contentEl;
+    container.empty();
+    container.addClass("claude-webview-proto");
+
+    const header = container.createDiv({ cls: "cwp-header" });
+    header.setText("stream-json prototype — not production");
+
+    this.cardsEl = container.createDiv({ cls: "cwp-cards" });
+
+    this.statusEl = container.createDiv({ cls: "cwp-status" });
+    this.statusEl.setText("idle");
+
+    const inputRow = container.createDiv({ cls: "cwp-input-row" });
+    this.inputEl = inputRow.createEl("textarea", {
+      cls: "cwp-input",
+      attr: { placeholder: "Ask Claude…", rows: "3" },
+    });
+    this.sendBtn = inputRow.createEl("button", { cls: "cwp-send", text: "Send" });
+    this.sendBtn.onclick = () => {
+      this.send().catch((err) => {
+        console.error("[webview-proto] send failed:", err);
+        this.statusEl.setText(`send error: ${err?.message ?? String(err)}`);
+      });
+    };
+
+    // Minimal inline styling so the prototype is usable without editing styles.css.
+    const style = container.createEl("style");
+    style.setText(`
+      .claude-webview-proto { display:flex; flex-direction:column; height:100%; padding:8px; gap:8px; }
+      .cwp-header { font-size:11px; color:var(--text-muted); }
+      .cwp-cards { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:8px; }
+      .cwp-card { border:1px solid var(--background-modifier-border); border-radius:6px; padding:10px; background:var(--background-secondary); }
+      .cwp-card.user { border-left:3px solid var(--interactive-accent); }
+      .cwp-card.assistant { border-left:3px solid var(--color-green); }
+      .cwp-card.tool { border-left:3px solid var(--color-orange); font-family:var(--font-monospace); font-size:12px; }
+      .cwp-card.result { border-left:3px solid var(--text-muted); font-size:12px; color:var(--text-muted); }
+      .cwp-card .cwp-role { font-size:11px; text-transform:uppercase; color:var(--text-muted); margin-bottom:4px; }
+      .cwp-card details.cwp-thinking { margin-top:6px; font-size:12px; color:var(--text-muted); }
+      .cwp-input-row { display:flex; gap:8px; }
+      .cwp-input { flex:1; resize:vertical; font-family:var(--font-monospace); font-size:13px; }
+      .cwp-send { padding:0 16px; }
+      .cwp-status { font-size:11px; color:var(--text-muted); min-height:1em; }
+    `);
+  }
+
+  async onClose(): Promise<void> {
+    this.killChild();
+  }
+
+  private async send(): Promise<void> {
+    const text = this.inputEl.value.trim();
+    if (!text) return;
+    if (this.child) {
+      new Notice("Already running — one prompt at a time in this prototype.");
+      return;
+    }
+    this.inputEl.value = "";
+    this.appendUserCard(text);
+    this.statusEl.setText("spawning claude…");
+    this.spawnClaude(text);
+  }
+
+  private spawnClaude(userText: string): void {
+    const claudePath = this.opts.getClaudePath() || "claude";
+    const cwd = this.opts.getCwd();
+    const cmdline = [
+      claudePath,
+      "-p",
+      "--output-format=stream-json",
+      "--input-format=stream-json",
+      "--verbose",
+    ]
+      .map((part) => `'${part.replace(/'/g, "'\\''")}'`)
+      .join(" ");
+
+    // Login shell to load the user's PATH (same strategy as terminal-manager.ts).
+    const shell = process.env.SHELL || "/bin/bash";
+    this.child = spawn(shell, ["-l", "-c", cmdline], {
+      cwd,
+      env: { ...process.env },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    this.child.stdout?.setEncoding("utf8");
+    this.child.stderr?.setEncoding("utf8");
+    this.child.stdout?.on("data", (chunk: string) => this.onStdout(chunk));
+    this.child.stderr?.on("data", (chunk: string) =>
+      console.warn("[webview-proto stderr]", chunk)
+    );
+    this.child.on("exit", (code) => {
+      this.statusEl.setText(`claude exited (code=${code})`);
+      this.flushStdout(true);
+      this.child = null;
+    });
+    this.child.on("error", (err) => {
+      this.statusEl.setText(`spawn error: ${err.message}`);
+      this.child = null;
+    });
+
+    const payload =
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: userText },
+      }) + "\n";
+    this.child.stdin?.write(payload);
+    this.child.stdin?.end();
+    this.statusEl.setText("streaming…");
+  }
+
+  private onStdout(chunk: string): void {
+    this.stdoutBuffer += chunk;
+    this.flushStdout(false);
+  }
+
+  private flushStdout(final: boolean): void {
+    let idx: number;
+    while ((idx = this.stdoutBuffer.indexOf("\n")) !== -1) {
+      const line = this.stdoutBuffer.slice(0, idx).trim();
+      this.stdoutBuffer = this.stdoutBuffer.slice(idx + 1);
+      if (!line) continue;
+      this.handleLine(line);
+    }
+    if (final && this.stdoutBuffer.trim()) {
+      this.handleLine(this.stdoutBuffer.trim());
+      this.stdoutBuffer = "";
+    }
+  }
+
+  private handleLine(line: string): void {
+    let evt: StreamEvent;
+    try {
+      evt = JSON.parse(line);
+    } catch (err) {
+      console.warn("[webview-proto] non-JSON line:", line);
+      return;
+    }
+    // Hide hook noise by default.
+    if (evt.type === "system" && typeof evt.subtype === "string" && evt.subtype.startsWith("hook_")) {
+      return;
+    }
+    if (evt.type === "rate_limit_event") return;
+
+    if (evt.type === "assistant") {
+      this.renderAssistant(evt as Extract<StreamEvent, { type: "assistant" }>);
+      return;
+    }
+    if (evt.type === "user") {
+      this.renderUserToolResult(evt as Extract<StreamEvent, { type: "user" }>);
+      return;
+    }
+    if (evt.type === "result") {
+      this.renderResult(evt as Extract<StreamEvent, { type: "result" }>);
+      return;
+    }
+    if (evt.type === "system" && "subtype" in evt && evt.subtype === "init") {
+      const model = (evt as any).model ?? "unknown";
+      const mcpCount = Array.isArray((evt as any).mcp_servers)
+        ? (evt as any).mcp_servers.length
+        : 0;
+      this.statusEl.setText(`init: ${model} · ${mcpCount} MCP servers`);
+      return;
+    }
+    // Unknown system/other — dump collapsed for debug.
+    const card = this.cardsEl.createDiv({ cls: "cwp-card tool" });
+    card.createDiv({ cls: "cwp-role", text: `${evt.type}${"subtype" in evt && evt.subtype ? ` / ${evt.subtype}` : ""}` });
+    const pre = card.createEl("pre");
+    pre.setText(JSON.stringify(evt, null, 2));
+  }
+
+  private renderAssistant(evt: Extract<StreamEvent, { type: "assistant" }>): void {
+    const msgId = evt.message.id;
+    let card = this.messageCards.get(msgId);
+    if (!card) {
+      card = this.cardsEl.createDiv({ cls: "cwp-card assistant" });
+      card.createDiv({ cls: "cwp-role", text: `assistant · ${evt.message.model}` });
+      this.messageCards.set(msgId, card);
+    }
+    for (const block of evt.message.content ?? []) {
+      if (block.type === "text") {
+        const el = card.createDiv();
+        void MarkdownRenderer.render(this.app, block.text, el, "", this);
+      } else if (block.type === "thinking") {
+        const details = card.createEl("details", { cls: "cwp-thinking" });
+        details.createEl("summary", { text: "thinking" });
+        const body = details.createEl("div");
+        void MarkdownRenderer.render(this.app, block.thinking, body, "", this);
+      } else if (block.type === "tool_use") {
+        const tool = card.createDiv({ cls: "cwp-card tool" });
+        tool.createDiv({ cls: "cwp-role", text: `tool_use · ${block.name}` });
+        const pre = tool.createEl("pre");
+        pre.setText(JSON.stringify(block.input, null, 2));
+      }
+    }
+    this.scrollToBottom();
+  }
+
+  private renderUserToolResult(evt: Extract<StreamEvent, { type: "user" }>): void {
+    // Echoed stdin (plain string content) — ignore: we already rendered a user card when the user sent.
+    const content = (evt.message as { content?: unknown }).content;
+    if (typeof content === "string") return;
+    if (!Array.isArray(content)) return;
+    for (const block of content) {
+      if (block && typeof block === "object" && (block as any).type === "tool_result") {
+        const b = block as { tool_use_id: string; content: unknown };
+        const card = this.cardsEl.createDiv({ cls: "cwp-card tool" });
+        card.createDiv({ cls: "cwp-role", text: `tool_result · ${b.tool_use_id}` });
+        const pre = card.createEl("pre");
+        const text =
+          typeof b.content === "string"
+            ? b.content
+            : JSON.stringify(b.content, null, 2);
+        pre.setText(text);
+      }
+    }
+    this.scrollToBottom();
+  }
+
+  private renderResult(evt: Extract<StreamEvent, { type: "result" }>): void {
+    const card = this.cardsEl.createDiv({ cls: "cwp-card result" });
+    card.createDiv({ cls: "cwp-role", text: `result · ${evt.subtype}` });
+    const cost = (evt as any).total_cost_usd ?? 0;
+    const turns = (evt as any).num_turns ?? 0;
+    const ms = (evt as any).duration_ms ?? 0;
+    card.createEl("div", {
+      text: `turns=${turns} · ${ms}ms · $${Number(cost).toFixed(4)}`,
+    });
+    if (typeof evt.result === "string") {
+      const summary = card.createEl("div");
+      summary.style.marginTop = "4px";
+      void MarkdownRenderer.render(this.app, evt.result, summary, "", this);
+    }
+    this.scrollToBottom();
+  }
+
+  private appendUserCard(text: string): void {
+    const card = this.cardsEl.createDiv({ cls: "cwp-card user" });
+    card.createDiv({ cls: "cwp-role", text: "you" });
+    const body = card.createEl("div");
+    body.setText(text);
+    this.scrollToBottom();
+  }
+
+  private scrollToBottom(): void {
+    this.cardsEl.scrollTop = this.cardsEl.scrollHeight;
+  }
+
+  private killChild(): void {
+    if (!this.child) return;
+    try {
+      this.child.kill();
+    } catch {
+      // ignore
+    }
+    this.child = null;
+  }
+}
+
+// ---- main.ts wiring helper (called from src/main.ts onload) ----
+
+export interface WireProtoParams {
+  plugin: {
+    registerView: (
+      type: string,
+      factory: (leaf: WorkspaceLeaf) => WebviewProtoView
+    ) => void;
+    addCommand: (cmd: {
+      id: string;
+      name: string;
+      callback: () => void;
+    }) => void;
+    app: App;
+  };
+  getClaudePath: () => string;
+  getCwd: () => string;
+}
+
+export function wireWebviewProto(params: WireProtoParams): void {
+  const { plugin, getClaudePath, getCwd } = params;
+  plugin.registerView(
+    VIEW_TYPE_WEBVIEW_PROTO,
+    (leaf) => new WebviewProtoView(leaf, { getClaudePath, getCwd })
+  );
+  plugin.addCommand({
+    id: COMMAND_OPEN_WEBVIEW_PROTO,
+    name: "Open Webview Proto (stream-json spike)",
+    callback: async () => {
+      const leaf = plugin.app.workspace.getRightLeaf(false);
+      if (!leaf) return;
+      await leaf.setViewState({ type: VIEW_TYPE_WEBVIEW_PROTO, active: true });
+      plugin.app.workspace.revealLeaf(leaf);
+    },
+  });
+}

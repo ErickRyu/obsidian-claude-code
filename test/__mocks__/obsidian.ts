@@ -10,6 +10,16 @@ export class ItemView {
   getDisplayText() { return ""; }
   getIcon() { return ""; }
   registerEvent(_: any) {}
+  // Obsidian's Component adds the DOM listener and remembers the unbind so
+  // unload / leaf close tears it down. The real API signature is
+  // `(el, type, callback, options?)`. The shim keeps the attach semantics
+  // minimal so happy-dom-driven tests observe the listener while still
+  // exercising the `registerDomEvent` code path in production view code.
+  registerDomEvent(el: any, type: string, handler: (ev: Event) => void): void {
+    if (el && typeof el.addEventListener === "function") {
+      el.addEventListener(type, handler);
+    }
+  }
 }
 
 export class Notice {
@@ -90,7 +100,16 @@ export function prepareFuzzySearch(query: string) {
 export function addIcon(_id: string, _svg: string) {}
 
 export class Plugin {
-  app: any;
+  app: any = {
+    workspace: {
+      getLeavesOfType: vi.fn(() => []),
+      getRightLeaf: vi.fn(() => ({
+        setViewState: vi.fn(async () => {}),
+        view: null,
+      })),
+      revealLeaf: vi.fn(),
+    },
+  };
   manifest: any = { id: "test" };
   async loadData() { return {}; }
   async saveData(_data: any) {}
@@ -98,6 +117,7 @@ export class Plugin {
   addSettingTab(_tab: any) {}
   registerView(_type: string, _factory: any) {}
   registerEvent(_event: any) {}
+  register(_cb: any) {}
 }
 
 export class PluginSettingTab {
@@ -112,6 +132,33 @@ export class Setting {
   setDesc(_desc: string) { return this; }
   addText(_cb: any) { return this; }
   addToggle(_cb: any) { return this; }
+  addDropdown(cb: (d: any) => void) {
+    const dropdown = {
+      options: {} as Record<string, string>,
+      value: "",
+      handler: (_v: string) => {},
+      addOption(k: string, v: string) { this.options[k] = v; return this; },
+      setValue(v: string) { this.value = v; return this; },
+      getValue() { return this.value; },
+      onChange(fn: (v: string) => void) { this.handler = fn; return this; },
+    };
+    cb(dropdown);
+    return this;
+  }
+}
+
+/**
+ * MarkdownRenderer mock — minimal contract for the webview renderers.
+ * Sets `el.innerHTML = text` so textContent-based assertions match.
+ */
+export const MarkdownRenderer = {
+  render: vi.fn(async (_app: any, text: string, el: HTMLElement, _sourcePath: string, _component: any) => {
+    el.innerHTML = String(text);
+  }),
+};
+
+export function setIcon(_el: HTMLElement, _id: string): void {
+  // no-op for tests
 }
 
 export type SearchResult = { score: number; matches: any[] };

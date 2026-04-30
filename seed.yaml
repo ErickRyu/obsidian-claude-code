@@ -1,0 +1,261 @@
+goal: Implement obsidian-claude v0.6.0 webview foundation — a custom Obsidian ItemView
+  that spawns `claude -p --output-format=stream-json` via child_process, parses JSONL
+  events, and renders assistant text / tool_use / tool_result / result as structured
+  HTML cards, coexisting with the existing xterm.js ClaudeTerminalView via a uiMode
+  toggle, across 9 iterations (Phase 0/1/2/3/4a/4b/5a/5b/6) validated by 8 fixtures
+  plus a single real `claude -p` smoke test.
+task_type: code
+brownfield_context:
+  project_type: brownfield
+  context_references:
+  - path: /Users/sungjin/MyDocument/Project/obsidian-claude/.claude/worktrees/webview-v6/RALPH_PLAN.md
+    role: primary
+    summary: Detailed 9-phase iteration plan with per-phase verification matrix, task
+      lists, must-have/should-have IDs, and error policy references
+  - path: /Users/sungjin/MyDocument/Project/obsidian-claude/.claude/worktrees/webview-v6/RALPH_PROMPT.md
+    role: primary
+    summary: RALPH loop prompt containing phase execution instructions and Architect+Critic
+      review criteria (APPROVED)
+  - path: spike/webview-stream-json
+    role: reference
+    summary: 1-day spike branch proving `claude -p` CLI spawn + JSONL stream-json
+      parsing feasibility (not SDK)
+  - path: existing ClaudeTerminalView (xterm.js)
+    role: reference
+    summary: Legacy terminal view that must coexist via uiMode toggle with zero regression
+  - path: existing 81 vitest tests
+    role: reference
+    summary: Baseline regression suite that must remain green at every phase gate
+  - path: docs/manual-smoke-checklist.md
+    role: reference
+    summary: Manual Obsidian-app smoke checklist requiring git-author signoff for
+      coexistence verification
+  existing_patterns:
+  - child_process.spawn of `claude -p --output-format=stream-json` (CLI spawn, NOT
+    Anthropic SDK)
+  - Obsidian ItemView registration via registerView(VIEW_TYPE_*) conditional on setting
+  - LineBuffer.flush() tail-retention for partial stdout chunks
+  - bus.emit({kind:'session.error', message}) for error surfacing
+  - Object.assign(DEFAULT_SETTINGS, loaded) settings migration with defaults for new
+    fields
+  - Namespaced console logs with `[claude-webview]` / `[claude-terminal]` prefixes
+  - Per-phase evidence JSON written to artifacts/ directory
+  - File allowlist + phase-N-complete git tag gating
+  - Fixture-based vitest validation using key-field assertions (not HTML snapshots)
+  - UnknownEvent wrapper preservation in parser + collapsed details/summary JSON-dump
+    card in renderer
+  - --allowedTools + --permission-mode preset dropdown (Safe/Standard/Full) for permission
+    UX
+  - Notice "재시작 필요" on uiMode setting change (no runtime re-registration)
+  existing_dependencies:
+  - TypeScript
+  - esbuild
+  - vitest
+  - xterm.js (for legacy ClaudeTerminalView coexistence)
+  - node-pty (legacy terminal view)
+  - Obsidian Plugin API (ItemView, registerView, Notice, Settings)
+  - Node.js child_process (spawn, stdin/stdout/stderr pipes)
+  - claude CLI (`claude -p --output-format=stream-json`)
+  - existing GitHub Release workflow (validated in v0.5.2, reused for 0.6.0-beta.1
+    artifact)
+constraints:
+- TypeScript + esbuild + vitest toolchain preserved
+- Existing 81/81 vitest tests must stay green on every phase completion
+- uiMode default must remain "terminal" (opt-in only, zero impact on existing users)
+- No HTML snapshot testing — key-field assertions only
+- No silent error swallowing — every error class has explicit policy
+- No external telemetry / analytics — console + evidence JSON only
+- '`[claude-webview]` console log namespace must stay separate from `[claude-terminal]`'
+- UnknownEvent must never throw — parser preserves wrapper, renderer shows collapsed
+  JSON dump
+- Screenshots / GIFs deferred to v0.6.0 GA (out of beta scope)
+- '`/mcp` slash command and inline permission prompts not supported in webview beta'
+- Settings migration must use Object.assign(DEFAULT_SETTINGS, loaded) pattern with
+  defaults for all 5 new fields
+- Git author signoff on manual-smoke-checklist must use rkggmdii@gmail.com
+- File allowlist + phase-N-complete git tag gate enforced per phase
+- vitest run ≤ 60s, `claude -p` smoke ≤ 30s timeout
+acceptance_criteria:
+- All 11 must-have items (MH-01..MH-11) implemented and verified
+- All 7 should-have items (SH-01..SH-07) implemented and verified
+- All 8 fixtures (hello / edit / permission / plan-mode / resume / slash-compact /
+  slash-mcp / todo.jsonl) render successfully with rawSkipped === 0
+- 'Differential fixture assertion holds: hello.eventCountByType.assistant === 1 AND
+  edit.eventCountByType.assistant >= 2 AND edit.user >= 1'
+- Per-fixture cardKinds Set membership and cardCountByKind expectations match
+- 'Semantic assertions pass: hello card text includes ''hello'', edit renders ≥1 .claude-wv-diff-add
+  and ≥1 .claude-wv-diff-remove'
+- Existing 81/81 vitest tests remain green at every phase gate
+- Error surface policy enforced for all 6 classes (spawn failure / JSONL parse error
+  / partial event / stderr non-empty / EPIPE / UnknownEvent)
+- Single real `claude -p` smoke test passes with UUID session_id + version field +
+  duration > 100ms
+- uiMode toggle shows Notice "재시작 필요" and only registers VIEW_TYPE_CLAUDE_WEBVIEW
+  when uiMode === "webview"
+- Permission UX exposes --allowedTools + --permission-mode preset dropdown (Safe /
+  Standard / Full)
+- manifest.json / VERSION / versions.json bumped to 0.6.0-beta.1 with CHANGELOG [0.6.0-beta.1]
+  section
+- README.md gains "Webview mode (Beta, opt-in)" section documenting how to enable
+  + constraints
+- Manual smoke checklist signed off by git author rkggmdii@gmail.com
+- All 9 phases reach phase-N-complete git tag
+ontology_schema:
+  name: WebviewStreamSession
+  description: Domain model for a single `claude -p --output-format=stream-json` child-process
+    session rendered inside the Obsidian webview ItemView — captures the JSONL event
+    stream, parser bookkeeping, card render output, permission configuration, and
+    coexistence state with the legacy xterm terminal view.
+  fields:
+  - name: sessionId
+    type: string
+    description: UUID session identifier emitted by `claude -p` in the init event
+    required: true
+  - name: uiMode
+    type: string
+    description: User setting controlling which view is active — "terminal" (default,
+      xterm.js) or "webview" (new)
+    required: true
+  - name: permissionPreset
+    type: string
+    description: Dropdown selection mapped to --allowedTools + --permission-mode flags
+      — one of Safe/Standard/Full
+    required: true
+  - name: events
+    type: array
+    description: Ordered JSONL events parsed from stdout stream (assistant / tool_use
+      / tool_result / result / system / UnknownEvent wrappers)
+    required: true
+  - name: cards
+    type: array
+    description: Structured HTML card records rendered from events with kind, DOM
+      node reference, and source event index
+    required: true
+  - name: cardKinds
+    type: array
+    description: Set of distinct card kinds emitted this session (used for fixture
+      assertion)
+    required: true
+  - name: cardCountByKind
+    type: object
+    description: Map of card kind to count (used for fixture assertion)
+    required: true
+  - name: eventCountByType
+    type: object
+    description: Map of event.type to count (used for differential fixture assertion)
+    required: true
+  - name: rawSkipped
+    type: number
+    description: Count of non-JSON lines gracefully skipped by parser — must be 0
+      for all fixtures
+    required: true
+  - name: unknownEventCount
+    type: number
+    description: Count of events with unrecognized type field preserved as UnknownEvent
+      wrappers — separate axis from rawSkipped
+    required: true
+  - name: lineBufferTail
+    type: string
+    description: Residual partial-chunk tail held by LineBuffer.flush() between stdout
+      chunks
+    required: true
+  - name: errorClass
+    type: string
+    description: Classification of last surfaced error — spawn-failure / parse-error
+      / partial-event / stderr / epipe / unknown-event / none
+    required: true
+  - name: showDebugSystemEvents
+    type: boolean
+    description: Setting gating render of hook_* events and UnknownEvent cards to
+      the user
+    required: true
+  - name: showThinking
+    type: boolean
+    description: Setting gating render of thinking blocks in assistant events
+    required: true
+  - name: lastSessionId
+    type: string
+    description: Persisted prior session_id for --resume support
+    required: true
+  - name: phase
+    type: string
+    description: Current iteration phase — Phase 0 / 1 / 2 / 3 / 4a / 4b / 5a / 5b
+      / 6
+    required: true
+  - name: evidenceArtifact
+    type: object
+    description: Per-phase evidence JSON written to artifacts/ capturing rawSkipped,
+      unknownEventCount, cardCountByKind, eventCountByType, and smoke outcome
+    required: true
+evaluation_principles:
+- name: error-surface-discipline
+  description: Every error class (spawn / parse / partial / stderr / EPIPE / UnknownEvent)
+    follows its fixed policy with no silent swallowing and no throws escaping the
+    parser
+  weight: 1.0
+- name: fixture-replay-determinism
+  description: All 8 fixtures parse with rawSkipped===0 and satisfy key-field assertions
+    including differential input checks — no HTML snapshot fragility
+  weight: 1.0
+- name: coexistence-zero-regression
+  description: Existing 81/81 vitest tests stay green and uiMode="terminal" path exhibits
+    zero behavior change at every phase gate
+  weight: 1.0
+- name: opt-in-safety
+  description: New settings fields default to values that preserve existing-user behavior
+    exactly (uiMode="terminal"), migration is pure Object.assign of defaults
+  weight: 0.9
+- name: ux-transparency
+  description: Parser drift and unknown events are visible to debug users via collapsed
+    JSON dump cards rather than hidden, enabling future schema-drift detection
+  weight: 0.8
+- name: phase-gated-progress
+  description: No phase declared complete until its verification matrix (including
+    full vitest regression row) passes and phase-N-complete git tag is applied
+  weight: 0.9
+- name: documentation-sufficiency
+  description: README gains opt-in Webview beta section documenting enablement + constraints,
+    manual smoke checklist signed by git author
+  weight: 0.6
+- name: performance-observational
+  description: vitest completes ≤60s and `claude -p` smoke ≤30s timeout with no hang
+    — no numeric latency/memory thresholds enforced in beta
+  weight: 0.3
+exit_conditions:
+- name: all-phases-tagged
+  description: All 9 iteration phases reach their phase-N-complete git tag
+  criteria: Phase 0/1/2/3/4a/4b/5a/5b/6 each carry a phase-N-complete tag with green
+    verification matrix
+- name: must-have-complete
+  description: All 11 must-have items implemented and verified
+  criteria: MH-01 through MH-11 each marked done in RALPH_PLAN.md with evidence
+- name: should-have-complete
+  description: All 7 should-have items implemented and verified
+  criteria: SH-01 through SH-07 each marked done with evidence
+- name: fixtures-green
+  description: All 8 fixtures render successfully with rawSkipped===0 and pass key-field
+    + differential assertions
+  criteria: hello/edit/permission/plan-mode/resume/slash-compact/slash-mcp/todo.jsonl
+    all green in Phase 6 6-4
+- name: smoke-passed
+  description: Single real `claude -p` smoke test succeeds
+  criteria: UUID session_id emitted + version field present + duration > 100ms + exit
+    code 0
+- name: coexistence-preserved
+  description: Existing terminal-view tests and manual smoke show zero regression
+  criteria: 81/81 vitest green AND manual-smoke-checklist signed by rkggmdii@gmail.com
+- name: release-artifacts-ready
+  description: Version bump and changelog complete
+  criteria: manifest.json + VERSION + versions.json at 0.6.0-beta.1 AND CHANGELOG
+    has [0.6.0-beta.1] section AND README has Webview mode (Beta, opt-in) section
+- name: error-policy-enforced
+  description: All 6 error classes follow fixed policy end-to-end
+  criteria: spawn-failure/parse-error/partial-event/stderr/EPIPE/UnknownEvent each
+    demonstrated via test or fixture
+metadata:
+  seed_id: seed_bcd0d973599b
+  version: 1.0.0
+  created_at: '2026-04-16T05:30:19.750751Z'
+  ambiguity_score: 0.077
+  interview_id: interview_20260416_051657
+  parent_seed_id: null
