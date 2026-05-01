@@ -197,20 +197,28 @@ export async function listGlobalSlashCommands(
     ? process.env.HOME ?? process.env.USERPROFILE
     : undefined,
 ): Promise<SlashCommand[]> {
-  if (!homeDir) return [];
+  if (!homeDir) {
+    // eslint-disable-next-line no-console
+    console.warn("[claude-webview] listGlobalSlashCommands: no HOME env");
+    return [];
+  }
   let fsP: typeof import("node:fs/promises");
   let pathMod: typeof import("node:path");
   try {
     fsP = await import("node:fs/promises");
     pathMod = await import("node:path");
-  } catch {
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[claude-webview] listGlobalSlashCommands: node module load failed:", err);
     return [];
   }
   const dir = pathMod.join(homeDir, ".claude", "commands");
   let entries: string[];
   try {
     entries = await fsP.readdir(dir);
-  } catch {
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(`[claude-webview] listGlobalSlashCommands: readdir(${dir}) failed:`, err);
     return [];
   }
   const out: SlashCommand[] = [];

@@ -757,9 +757,13 @@ export class ClaudeWebviewView extends ItemView {
 
     // Kick off global ~/.claude/commands load opportunistically.
     if (this.globalSlashCache === null) {
+      // eslint-disable-next-line no-console
+      console.log("[claude-webview] loading global slash commands from ~/.claude/commands…");
       void listGlobalSlashCommands()
         .then((cmds) => {
           this.globalSlashCache = cmds;
+          // eslint-disable-next-line no-console
+          console.log(`[claude-webview] loaded ${cmds.length} global slash commands`);
         })
         .catch((err: unknown) => {
           // eslint-disable-next-line no-console
