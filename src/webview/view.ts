@@ -814,7 +814,7 @@ export class ClaudeWebviewView extends ItemView {
     // its textareaEl. Each driver owns at most one popover at a time
     // and listens to the textarea's `input` event.
     const textarea = this.inputBar.textareaEl;
-    const anchor = this.inputBar.textareaEl as HTMLElement;
+    const anchor: HTMLElement = textarea;
 
     const atDriver = createAtMentionDriver({
       textarea,
@@ -875,8 +875,11 @@ export class ClaudeWebviewView extends ItemView {
   }
 
   /**
-   * Returns the merged + filtered slash command list. Sources: CLI
-   * builtins, vault `.claude/commands/`, global `~/.claude/commands/`.
+   * Returns the merged + filtered slash command list. Sources merged in
+   * priority order: CLI builtins (canonical, populated after first message),
+   * vault `.claude/commands/`, global `~/.claude/commands/`, and every
+   * plugin discovered via `installed_plugins.json` (commands + skills).
+   * Substring filter (case-insensitive) on the command name.
    */
   private searchSlashCommands(query: string): PopoverItem[] {
     const merged = mergeSlashCommands(

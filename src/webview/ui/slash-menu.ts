@@ -27,9 +27,16 @@ export interface SlashCommandSourceProvider {
 }
 
 /**
- * Merges CLI builtin command names + user (vault) commands + global
- * (`~/.claude/commands`) commands into a single deduped, sorted list.
- * Earlier sources win on name collision: cli > user > global.
+ * Merges command sources into a single deduped, sorted list.
+ *   - `cli` — CLI builtin command names from `system.init.slash_commands`.
+ *   - `user` — vault `.claude/commands/*.md` (typed as full SlashCommand
+ *     so caller can provide descriptions + `source: "user"`).
+ *   - `global` — caller-supplied tail. Used in production for the union
+ *     of `~/.claude/commands/*.md` (`source: "global"`) and plugin
+ *     discoveries (`source: "plugin"`); both flow in through this slot
+ *     so each entry's own `source` field is preserved on output.
+ * Earlier sources win on name collision: cli > user > (global ∪ plugin).
+ * Output sorted alphabetically by name.
  */
 export function mergeSlashCommands(
   cli: readonly string[],

@@ -194,7 +194,7 @@ export function mountInlinePopover(
   const update = (items: readonly PopoverItem[]): void => {
     if (disposed) return;
     currentItems = items;
-    selectedIndex = items.length > 0 ? 0 : 0;
+    selectedIndex = 0;
     render();
   };
 
