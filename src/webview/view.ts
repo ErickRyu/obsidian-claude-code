@@ -1,16 +1,18 @@
-import { ItemView, WorkspaceLeaf } from "obsidian";
+import { ItemView, WorkspaceLeaf, prepareFuzzySearch, TFile } from "obsidian";
 import { VIEW_TYPE_CLAUDE_WEBVIEW } from "../constants";
-import { FileSuggestModal } from "../file-suggest-modal";
 import { buildLayout, type WebviewLayout } from "./ui/layout";
 import { createBus, type Bus } from "./event-bus";
 import { buildInputBar, type InputBar } from "./ui/input-bar";
-import { handleAtInput } from "./ui/at-mention-trigger";
 import {
-  handleSlashKey,
+  mountInlinePopover,
+  type PopoverItem,
+} from "./ui/inline-popover";
+import { createAtMentionDriver } from "./ui/at-mention-trigger";
+import {
+  createSlashMenuDriver,
+  listGlobalSlashCommands,
   mergeSlashCommands,
-  SlashCommandModal,
   type SlashCommand,
-  type SlashCommandSource,
 } from "./ui/slash-menu";
 import {
   SessionController,
@@ -239,6 +241,15 @@ interface RendererStates {
   readonly compactBoundary: CompactBoundaryRenderState;
 }
 
+function toFilePopoverItem(file: TFile): PopoverItem {
+  return {
+    id: file.path,
+    label: file.basename,
+    description: file.path,
+    metadata: file.path,
+  };
+}
+
 export class ClaudeWebviewView extends ItemView {
   private disposed = true;
   private closed = false;
@@ -261,6 +272,17 @@ export class ClaudeWebviewView extends ItemView {
    * `null` means "not yet loaded".
    */
   private userSlashCache: SlashCommand[] | null = null;
+  /**
+   * Slash commands discovered under `~/.claude/commands/*.md`. Loaded
+   * once per view (cheap directory read), null until populated.
+   */
+  private globalSlashCache: SlashCommand[] | null = null;
+  /**
+   * Lifecycle handles for the inline popover drivers — invoked from
+   * `onClose` so any open popover is torn down with the view.
+   */
+  private atDriverDispose: (() => void) | null = null;
+  private slashDriverDispose: (() => void) | null = null;
   /**
    * 2026-04-29 dogfood Issue #2 — stay pinned to the bottom of the cards
    * region while streaming, but yield to the user the moment they
@@ -733,51 +755,124 @@ export class ClaudeWebviewView extends ItemView {
       }
     }
 
-    const slashSource: SlashCommandSource = {
-      list: () => mergeSlashCommands(
-        this.cliSlashCommands,
-        this.userSlashCache ?? [],
-      ),
-    };
+    // Kick off global ~/.claude/commands load opportunistically.
+    if (this.globalSlashCache === null) {
+      void listGlobalSlashCommands()
+        .then((cmds) => {
+          this.globalSlashCache = cmds;
+        })
+        .catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.warn("[claude-webview] global slash command load failed:", err);
+          this.globalSlashCache = [];
+        });
+    }
 
     this.inputBar = buildInputBar(this.layout.inputRowEl, bus, {
       registerDomEvent: (el, type, handler) => {
         this.registerDomEvent(el, type, handler);
       },
-      onAtInput: (e) => {
-        const ta = this.inputBar?.textareaEl;
-        if (!ta) return;
-        handleAtInput(
-          {
-            textarea: ta,
-            openModal: (onSelect, onDismiss) => {
-              new FileSuggestModal(this.app, onSelect, onDismiss).open();
-            },
-          },
-          e,
-        );
-      },
-      onSlashTrigger: (e) => {
-        const ta = this.inputBar?.textareaEl;
-        if (!ta) return false;
-        return handleSlashKey(
-          {
-            textarea: ta,
-            source: slashSource,
-            openModal: (items, onSelect, onDismiss) => {
-              new SlashCommandModal(this.app, items, onSelect, onDismiss).open();
-            },
-          },
-          e,
-        );
-      },
     });
+
+    // Build inline-popover drivers AFTER inputBar so we can close over
+    // its textareaEl. Each driver owns at most one popover at a time
+    // and listens to the textarea's `input` event.
+    const textarea = this.inputBar.textareaEl;
+    const anchor = this.inputBar.textareaEl as HTMLElement;
+
+    const atDriver = createAtMentionDriver({
+      textarea,
+      searchFiles: (query) => this.searchVaultFiles(query),
+      openPopover: (items, onSelect, onDismiss) =>
+        mountInlinePopover({
+          anchor,
+          items,
+          onSelect,
+          onDismiss,
+          emptyMessage: "No vault files match",
+        }),
+    });
+    this.atDriverDispose = atDriver.dispose;
+
+    const slashDriver = createSlashMenuDriver({
+      textarea,
+      searchCommands: (query) => this.searchSlashCommands(query),
+      openPopover: (items, onSelect, onDismiss) =>
+        mountInlinePopover({
+          anchor,
+          items,
+          onSelect,
+          onDismiss,
+          emptyMessage: "No slash commands match",
+        }),
+    });
+    this.slashDriverDispose = slashDriver.dispose;
+
+    this.registerDomEvent(textarea, "input", (e) => {
+      atDriver.onInput(e);
+      slashDriver.onInput(e);
+    });
+  }
+
+  /**
+   * Fuzzy-search vault files for the @ popover. Returns up to 30 results
+   * sorted by match score; when query is empty, returns the 30 most
+   * recently modified notes.
+   */
+  private searchVaultFiles(query: string): PopoverItem[] {
+    const files = this.app?.vault?.getFiles?.() ?? [];
+    if (query.length === 0) {
+      return files
+        .slice()
+        .sort((a, b) => b.stat.mtime - a.stat.mtime)
+        .slice(0, 30)
+        .map(toFilePopoverItem);
+    }
+    const fuzzy = prepareFuzzySearch(query);
+    const ranked: Array<{ file: TFile; score: number }> = [];
+    for (const f of files) {
+      const m = fuzzy(f.path);
+      if (m) ranked.push({ file: f, score: m.score });
+    }
+    ranked.sort((a, b) => b.score - a.score);
+    return ranked.slice(0, 30).map(({ file }) => toFilePopoverItem(file));
+  }
+
+  /**
+   * Returns the merged + filtered slash command list. Sources: CLI
+   * builtins, vault `.claude/commands/`, global `~/.claude/commands/`.
+   */
+  private searchSlashCommands(query: string): PopoverItem[] {
+    const merged = mergeSlashCommands(
+      this.cliSlashCommands,
+      this.userSlashCache ?? [],
+      this.globalSlashCache ?? [],
+    );
+    const q = query.toLowerCase();
+    const filtered = q.length === 0
+      ? merged
+      : merged.filter((c) => c.name.toLowerCase().includes(q));
+    return filtered.slice(0, 30).map((c) => ({
+      id: `${c.source}:${c.name}`,
+      label: `/${c.name}`,
+      description: c.description,
+      badge: c.source,
+      metadata: c.name,
+    }));
   }
 
   async onClose(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     this.disposed = true;
+    if (this.atDriverDispose) {
+      try { this.atDriverDispose(); } catch { /* dispose must not throw */ }
+      this.atDriverDispose = null;
+    }
+    if (this.slashDriverDispose) {
+      try { this.slashDriverDispose(); } catch { /* dispose must not throw */ }
+      this.slashDriverDispose = null;
+    }
     if (this.controller) {
       try {
         this.controller.dispose();

@@ -1,76 +1,82 @@
-export interface AtMentionDeps {
-  readonly textarea: HTMLTextAreaElement;
-  readonly openModal: (
-    onSelect: (path: string) => void,
-    onDismiss: () => void,
-  ) => void;
+/**
+ * @ file picker trigger.
+ *
+ * Listens to the textarea's `input` event. When the user types `@` in a
+ * position that warrants a file picker (start of textarea, or after
+ * whitespace), it asks the caller to mount an inline popover. As the user
+ * keeps typing, the same handler is invoked on every input event and
+ * forwards the running query (the substring after `@` up to the cursor).
+ *
+ * On select, `replaceAtToken` swaps the entire `@<query>` token with
+ * `@<path> ` and tears the popover down.
+ */
+
+import type { PopoverItem, InlinePopoverHandle } from "./inline-popover";
+
+export interface AtTokenContext {
+  /** Position of the `@` in the textarea. */
+  readonly atPos: number;
+  /** Substring between `@` and the current cursor (the user's query). */
+  readonly query: string;
 }
 
 /**
- * Decides whether the current `input` event corresponds to a fresh `@`
- * keystroke that should open the file picker.
- *
- * Returns `{ atPos }` (the position of the `@` in the textarea) when the
- * trigger condition matches, `null` otherwise. Trigger requires:
- *   - the just-inserted data is exactly "@" (rules out paste of "@foo",
- *     IME composition end, autocomplete, etc.)
- *   - the @ is at the start of the textarea OR is preceded by whitespace
- *     (so a mid-word `email@example` does not open the modal)
+ * Returns the `@<query>` token the cursor is currently inside, or `null`
+ * if there is no live token. Walks back from the cursor to the nearest
+ * whitespace; the character immediately after that whitespace must be `@`.
  */
-export function shouldTriggerOnInput(
+export function findActiveAtToken(
+  textarea: HTMLTextAreaElement,
+): AtTokenContext | null {
+  const value = textarea.value;
+  const cursor = textarea.selectionStart ?? 0;
+  if (cursor === 0) return null;
+
+  // Scan back from cursor to the start of the current token.
+  let i = cursor;
+  while (i > 0 && !/\s/.test(value[i - 1])) {
+    i -= 1;
+  }
+  // i is at the start of the token (either 0 or just after whitespace).
+  if (value[i] !== "@") return null;
+
+  return { atPos: i, query: value.slice(i + 1, cursor) };
+}
+
+/**
+ * Returns true when the input event represents a fresh `@` keystroke
+ * worth opening the popover for. Trigger conditions:
+ *   - InputEvent.data === "@" (rules out paste, IME composition, etc.)
+ *   - InputEvent.inputType === "insertText" or undefined (happy-dom)
+ *   - !isComposing
+ *   - The `@` is at start of textarea OR preceded by whitespace
+ */
+export function isFreshAtTrigger(
   textarea: HTMLTextAreaElement,
   e: Event,
-): { atPos: number } | null {
-  // happy-dom may not give us an InputEvent — feature-detect.
+): boolean {
   const ie = e as InputEvent;
-  if ("isComposing" in ie && ie.isComposing === true) return null;
-  if ("inputType" in ie && ie.inputType !== undefined && ie.inputType !== "insertText") {
-    return null;
+  if ("isComposing" in ie && ie.isComposing === true) return false;
+  if (
+    "inputType" in ie &&
+    ie.inputType !== undefined &&
+    ie.inputType !== "insertText"
+  ) {
+    return false;
   }
-  if ("data" in ie && ie.data !== undefined && ie.data !== "@") return null;
+  if ("data" in ie && ie.data !== undefined && ie.data !== "@") return false;
 
-  const pos = textarea.selectionStart ?? 0;
-  if (pos === 0) return null;
-  if (textarea.value[pos - 1] !== "@") return null;
-
-  if (pos === 1) return { atPos: 0 };
-  const charBefore = textarea.value[pos - 2];
-  if (/\s/.test(charBefore)) return { atPos: pos - 1 };
-
-  return null;
+  const cursor = textarea.selectionStart ?? 0;
+  if (cursor === 0) return false;
+  if (textarea.value[cursor - 1] !== "@") return false;
+  if (cursor === 1) return true;
+  return /\s/.test(textarea.value[cursor - 2]);
 }
 
 /**
- * Hook this into the textarea's `input` event. Opens the file picker
- * whenever the user just typed an `@` in a position that warrants it.
- *
- * On select: replaces the typed `@` (and any query characters) with
- * `@<path> ` via `replaceAtToken`.
- * On dismiss: leaves the typed `@` in place (the user can keep typing
- * normally).
- *
- * Returns `true` if the modal was opened, `false` otherwise.
- */
-export function handleAtInput(deps: AtMentionDeps, e: Event): boolean {
-  const trigger = shouldTriggerOnInput(deps.textarea, e);
-  if (!trigger) return false;
-
-  const { atPos } = trigger;
-  deps.openModal(
-    (path: string) => {
-      replaceAtToken(deps.textarea, atPos, `@${path} `);
-    },
-    () => {
-      // Modal dismissed — the typed @ stays in the textarea so the user
-      // can continue editing it manually.
-    },
-  );
-  return true;
-}
-
-/**
- * Replaces the `@` token (from `atPos` up to the current cursor position)
- * with `replacement`. Used after the file picker resolves.
+ * Replaces the `@` token at `atPos` (up to the current cursor) with
+ * `replacement`. Cursor lands at end of the replacement. Dispatches an
+ * `input` event so auto-resize listeners fire.
  */
 export function replaceAtToken(
   textarea: HTMLTextAreaElement,
@@ -92,28 +98,83 @@ export function replaceAtToken(
   textarea.dispatchEvent(new EventCtor("input", { bubbles: true }));
 }
 
+export interface AtMentionRuntime {
+  readonly textarea: HTMLTextAreaElement;
+  /** Returns the popover items to show for the current query. */
+  readonly searchFiles: (query: string) => PopoverItem[];
+  /** Mounts the popover and returns its handle. */
+  readonly openPopover: (
+    items: readonly PopoverItem[],
+    onSelect: (item: PopoverItem) => void,
+    onDismiss: () => void,
+  ) => InlinePopoverHandle;
+}
+
 /**
- * Inserts `text` at the current cursor / selection. Kept for callers that
- * need a raw insertion (e.g. tests). Most production callers should prefer
- * `replaceAtToken` so the typed `@` is consumed cleanly.
+ * Manages the @ popover lifecycle for one textarea. Returns a function
+ * that the caller hooks into the textarea's `input` listener.
  */
-export function insertAtCursor(
-  textarea: HTMLTextAreaElement,
-  text: string,
-): void {
-  const start = textarea.selectionStart ?? 0;
-  const end = textarea.selectionEnd ?? start;
-  const before = textarea.value.slice(0, start);
-  const after = textarea.value.slice(end);
+export function createAtMentionDriver(runtime: AtMentionRuntime): {
+  onInput: (e: Event) => void;
+  dispose: () => void;
+} {
+  let popover: InlinePopoverHandle | null = null;
+  let activeAtPos: number | null = null;
 
-  textarea.value = before + text + after;
+  const close = (): void => {
+    if (popover) {
+      popover.dispose();
+      popover = null;
+    }
+    activeAtPos = null;
+  };
 
-  const newPos = start + text.length;
-  textarea.selectionStart = newPos;
-  textarea.selectionEnd = newPos;
+  const openWithToken = (atPos: number, query: string): void => {
+    activeAtPos = atPos;
+    const items = runtime.searchFiles(query);
+    popover = runtime.openPopover(
+      items,
+      (item) => {
+        const path = String(item.metadata ?? item.label);
+        if (activeAtPos !== null) {
+          replaceAtToken(runtime.textarea, activeAtPos, `@${path} `);
+        }
+        close();
+      },
+      () => close(),
+    );
+  };
 
-  const EventCtor: typeof Event =
-    (textarea.ownerDocument?.defaultView as unknown as { Event: typeof Event } | null)
-      ?.Event ?? Event;
-  textarea.dispatchEvent(new EventCtor("input", { bubbles: true }));
+  const onInput = (e: Event): void => {
+    const ta = runtime.textarea;
+    const token = findActiveAtToken(ta);
+
+    if (popover) {
+      // Popover is open. Either keep showing for the live token, or close.
+      if (!token || token.atPos !== activeAtPos) {
+        // User deleted the @ or moved out of the token — close.
+        close();
+        // If they typed a new @ that should re-open, fall through to the
+        // fresh-trigger logic below.
+        if (!isFreshAtTrigger(ta, e)) return;
+        const fresh = findActiveAtToken(ta);
+        if (!fresh) return;
+        openWithToken(fresh.atPos, fresh.query);
+        return;
+      }
+      // Same token — just update the query.
+      popover.update(runtime.searchFiles(token.query));
+      return;
+    }
+
+    // No popover yet. Open on a fresh @ keystroke.
+    if (!isFreshAtTrigger(ta, e)) return;
+    if (!token) return;
+    openWithToken(token.atPos, token.query);
+  };
+
+  return {
+    onInput,
+    dispose: close,
+  };
 }

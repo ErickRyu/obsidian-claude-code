@@ -1,339 +1,252 @@
 /**
- * Phase 3 — slash command menu (slash-menu.ts) unit tests.
- *
- * Tests cover the pure helpers:
- *   - shouldTriggerSlash
- *   - handleSlashKey
- *   - mergeSlashCommands
- *
- * SlashCommandModal is NOT tested here (requires Obsidian DOM + App).
- * All tests use happy-dom Window for DOM elements and a fake openModal.
+ * Slash menu tests — driver + helpers.
  */
 import { describe, it, expect, vi } from "vitest";
 import { Window } from "happy-dom";
 import {
-  shouldTriggerSlash,
-  handleSlashKey,
   mergeSlashCommands,
+  isFreshSlashTrigger,
+  findActiveSlashToken,
+  applySlashCommand,
+  createSlashMenuDriver,
   type SlashCommand,
-  type SlashMenuDeps,
 } from "../../src/webview/ui/slash-menu";
+import type { InlinePopoverHandle, PopoverItem } from "../../src/webview/ui/inline-popover";
 
 function makeWindow(): Window {
   return new Window();
 }
 
-function makeTextarea(
-  win: Window,
-  value = ""
-): HTMLTextAreaElement {
+function makeTextarea(win: Window, value = ""): HTMLTextAreaElement {
   const doc = win.document;
-  const el = doc.createElement("textarea");
-  el.value = value;
-  doc.body.appendChild(el);
-  return el as unknown as HTMLTextAreaElement;
+  const ta = doc.createElement("textarea") as unknown as HTMLTextAreaElement;
+  ta.value = value;
+  doc.body.appendChild(ta);
+  return ta;
 }
 
-function makeKeyboardEvent(
+function makeInputEvent(
   win: Window,
-  init: {
-    key: string;
-    isComposing?: boolean;
-    metaKey?: boolean;
-    ctrlKey?: boolean;
-    altKey?: boolean;
+  fields: { data?: string; inputType?: string; isComposing?: boolean } = {},
+): Event {
+  const EventCtor = (win as unknown as { Event: typeof Event }).Event;
+  const e = new EventCtor("input", { bubbles: true });
+  if (fields.data !== undefined) {
+    Object.defineProperty(e, "data", { value: fields.data, configurable: true });
   }
-): KeyboardEvent {
-  const KeyboardEventCtor = (win as unknown as { KeyboardEvent: typeof KeyboardEvent })
-    .KeyboardEvent;
-  return new KeyboardEventCtor("keydown", {
-    key: init.key,
-    bubbles: true,
-    cancelable: true,
-    composed: init.isComposing ?? false,
-    metaKey: init.metaKey ?? false,
-    ctrlKey: init.ctrlKey ?? false,
-    altKey: init.altKey ?? false,
-  }) as unknown as KeyboardEvent;
+  if (fields.inputType !== undefined) {
+    Object.defineProperty(e, "inputType", { value: fields.inputType, configurable: true });
+  }
+  if (fields.isComposing !== undefined) {
+    Object.defineProperty(e, "isComposing", { value: fields.isComposing, configurable: true });
+  }
+  return e;
 }
 
-// ---------------------------------------------------------------------------
-// shouldTriggerSlash
-// ---------------------------------------------------------------------------
+function fakePopoverHandle(): InlinePopoverHandle & {
+  updates: PopoverItem[][];
+  disposed: boolean;
+} {
+  const updates: PopoverItem[][] = [];
+  let disposed = false;
+  return {
+    update(items) {
+      updates.push([...items]);
+    },
+    dispose() {
+      disposed = true;
+    },
+    isOpen() {
+      return !disposed;
+    },
+    get updates() {
+      return updates;
+    },
+    get disposed() {
+      return disposed;
+    },
+  } as unknown as InlinePopoverHandle & { updates: PopoverItem[][]; disposed: boolean };
+}
 
-describe("shouldTriggerSlash", () => {
-  it("returns true for '/' at empty textarea (no modifiers)", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, "");
-    const e = makeKeyboardEvent(win, { key: "/" });
-    expect(shouldTriggerSlash(ta, e)).toBe(true);
-  });
-
-  it("returns false for '/' at non-empty textarea", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, "hello");
-    const e = makeKeyboardEvent(win, { key: "/" });
-    expect(shouldTriggerSlash(ta, e)).toBe(false);
-  });
-
-  it("returns false for '/' at textarea with whitespace only (non-empty)", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, " ");
-    const e = makeKeyboardEvent(win, { key: "/" });
-    expect(shouldTriggerSlash(ta, e)).toBe(false);
-  });
-
-  it("returns false during IME composition (isComposing=true)", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, "");
-    // Create event that simulates composing state
-    const KeyboardEventCtor = (win as unknown as { KeyboardEvent: typeof KeyboardEvent })
-      .KeyboardEvent;
-    const e = new KeyboardEventCtor("keydown", {
-      key: "/",
-      bubbles: true,
-      cancelable: true,
-      isComposing: true,
-    }) as unknown as KeyboardEvent;
-    expect(shouldTriggerSlash(ta, e)).toBe(false);
-  });
-
-  it("returns false with metaKey (Cmd+/)", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, "");
-    const e = makeKeyboardEvent(win, { key: "/", metaKey: true });
-    expect(shouldTriggerSlash(ta, e)).toBe(false);
-  });
-
-  it("returns false with ctrlKey (Ctrl+/)", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, "");
-    const e = makeKeyboardEvent(win, { key: "/", ctrlKey: true });
-    expect(shouldTriggerSlash(ta, e)).toBe(false);
-  });
-
-  it("returns false with altKey (Alt+/)", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, "");
-    const e = makeKeyboardEvent(win, { key: "/", altKey: true });
-    expect(shouldTriggerSlash(ta, e)).toBe(false);
-  });
-
-  it("returns false for non-slash keys at empty textarea", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, "");
-    const e = makeKeyboardEvent(win, { key: "a" });
-    expect(shouldTriggerSlash(ta, e)).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// handleSlashKey
-// ---------------------------------------------------------------------------
-
-describe("handleSlashKey", () => {
-  it("calls openModal with source.list() result and preventDefault on trigger", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, "");
-    const e = makeKeyboardEvent(win, { key: "/" });
-    // Spy on preventDefault
-    let preventDefaultCalled = false;
-    Object.defineProperty(e, "preventDefault", {
-      value: () => { preventDefaultCalled = true; },
-    });
-
-    const commands: SlashCommand[] = [
-      { name: "compact", source: "cli" },
-      { name: "clear", source: "cli" },
-    ];
-
-    let capturedItems: readonly SlashCommand[] | null = null;
-    const openModal = vi.fn((items, _onSelect, _onDismiss) => {
-      capturedItems = items;
-    });
-
-    const deps: SlashMenuDeps = {
-      textarea: ta,
-      source: { list: () => commands },
-      openModal,
-    };
-
-    const intercepted = handleSlashKey(deps, e);
-
-    expect(intercepted).toBe(true);
-    expect(preventDefaultCalled).toBe(true);
-    expect(openModal).toHaveBeenCalledOnce();
-    expect(capturedItems).toEqual(commands);
-  });
-
-  it("returns false and does NOT call openModal when key is not '/'", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, "");
-    const e = makeKeyboardEvent(win, { key: "a" });
-
-    const openModal = vi.fn();
-    const deps: SlashMenuDeps = {
-      textarea: ta,
-      source: { list: () => [] },
-      openModal,
-    };
-
-    const intercepted = handleSlashKey(deps, e);
-    expect(intercepted).toBe(false);
-    expect(openModal).not.toHaveBeenCalled();
-  });
-
-  it("onSelect callback writes '/<name> ' to textarea and dispatches input event", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, "");
-    const e = makeKeyboardEvent(win, { key: "/" });
-    Object.defineProperty(e, "preventDefault", { value: () => {} });
-
-    const cmd: SlashCommand = { name: "compact", source: "cli" };
-    let capturedOnSelect: ((cmd: SlashCommand) => void) | null = null;
-    const openModal = vi.fn((_items, onSelect, _onDismiss) => {
-      capturedOnSelect = onSelect;
-    });
-
-    const inputEvents: string[] = [];
-    ta.addEventListener("input", () => {
-      inputEvents.push(ta.value);
-    });
-
-    const deps: SlashMenuDeps = {
-      textarea: ta,
-      source: { list: () => [cmd] },
-      openModal,
-    };
-
-    handleSlashKey(deps, e);
-    expect(capturedOnSelect).not.toBeNull();
-
-    capturedOnSelect!(cmd);
-
-    expect(ta.value).toBe("/compact ");
-    expect(inputEvents).toHaveLength(1);
-    expect(inputEvents[0]).toBe("/compact ");
-  });
-
-  it("onDismiss callback writes '/' to textarea and dispatches input event", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, "");
-    const e = makeKeyboardEvent(win, { key: "/" });
-    Object.defineProperty(e, "preventDefault", { value: () => {} });
-
-    let capturedOnDismiss: (() => void) | null = null;
-    let selectCalled = false;
-    const openModal = vi.fn((_items, _onSelect, onDismiss) => {
-      capturedOnDismiss = onDismiss;
-    });
-
-    const inputEvents: string[] = [];
-    ta.addEventListener("input", () => {
-      inputEvents.push(ta.value);
-    });
-
-    const deps: SlashMenuDeps = {
-      textarea: ta,
-      source: { list: () => [] },
-      openModal,
-    };
-
-    handleSlashKey(deps, e);
-    expect(capturedOnDismiss).not.toBeNull();
-
-    // Simulate that user dismissed without selecting
-    capturedOnDismiss!();
-
-    expect(ta.value).toBe("/");
-    expect(inputEvents).toHaveLength(1);
-    expect(selectCalled).toBe(false);
-  });
-
-  it("does not intercept when non-trigger conditions (non-empty textarea)", () => {
-    const win = makeWindow();
-    const ta = makeTextarea(win, "some text");
-    const e = makeKeyboardEvent(win, { key: "/" });
-
-    const openModal = vi.fn();
-    const deps: SlashMenuDeps = {
-      textarea: ta,
-      source: { list: () => [] },
-      openModal,
-    };
-
-    const intercepted = handleSlashKey(deps, e);
-    expect(intercepted).toBe(false);
-    expect(openModal).not.toHaveBeenCalled();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// mergeSlashCommands
-// ---------------------------------------------------------------------------
+// ─── mergeSlashCommands ───────────────────────────────────────────────────────
 
 describe("mergeSlashCommands", () => {
-  it("pure CLI list → all source:'cli', sorted alphabetically", () => {
-    const result = mergeSlashCommands(["compact", "clear", "mcp"], []);
-    expect(result).toEqual([
-      { name: "clear", source: "cli" },
-      { name: "compact", source: "cli" },
-      { name: "mcp", source: "cli" },
-    ]);
+  it("returns CLI builtins as source: cli, sorted alphabetically", () => {
+    const out = mergeSlashCommands(["compact", "clear", "mcp"], [], []);
+    expect(out.map((c) => c.name)).toEqual(["clear", "compact", "mcp"]);
+    expect(out.every((c) => c.source === "cli")).toBe(true);
   });
 
-  it("pure user list → preserved with source:'user'", () => {
-    const userCmds: SlashCommand[] = [
-      { name: "my-cmd", source: "user", description: "My custom command" },
-      { name: "another", source: "user", description: "Another one" },
-    ];
-    const result = mergeSlashCommands([], userCmds);
-    expect(result).toEqual([
-      { name: "another", source: "user", description: "Another one" },
-      { name: "my-cmd", source: "user", description: "My custom command" },
-    ]);
+  it("merges all three sources", () => {
+    const user: SlashCommand[] = [{ name: "review", source: "user" }];
+    const global: SlashCommand[] = [{ name: "weekly-review", source: "global" }];
+    const out = mergeSlashCommands(["clear"], user, global);
+    expect(out.map((c) => c.name).sort()).toEqual(["clear", "review", "weekly-review"]);
   });
 
-  it("name conflict → CLI wins, single entry result", () => {
-    const userCmds: SlashCommand[] = [
-      { name: "compact", source: "user", description: "User compact override" },
-    ];
-    const result = mergeSlashCommands(["compact", "clear"], userCmds);
-    const compactEntries = result.filter((c) => c.name === "compact");
-    expect(compactEntries).toHaveLength(1);
-    expect(compactEntries[0].source).toBe("cli");
+  it("dedupes by name with cli > user > global precedence", () => {
+    const user: SlashCommand[] = [{ name: "compact", source: "user", description: "user desc" }];
+    const global: SlashCommand[] = [{ name: "compact", source: "global", description: "global desc" }];
+    const out = mergeSlashCommands(["compact"], user, global);
+    expect(out).toHaveLength(1);
+    expect(out[0].source).toBe("cli");
   });
 
-  it("empty inputs → empty output", () => {
-    expect(mergeSlashCommands([], [])).toEqual([]);
+  it("returns empty list when all sources are empty", () => {
+    expect(mergeSlashCommands([], [], [])).toEqual([]);
+  });
+});
+
+// ─── isFreshSlashTrigger ──────────────────────────────────────────────────────
+
+describe("isFreshSlashTrigger", () => {
+  it("true for / typed into empty textarea", () => {
+    const win = makeWindow();
+    const ta = makeTextarea(win, "/");
+    expect(isFreshSlashTrigger(ta, makeInputEvent(win, { data: "/", inputType: "insertText" }))).toBe(true);
   });
 
-  it("mixed CLI and user commands are sorted alphabetically by name", () => {
-    const userCmds: SlashCommand[] = [
-      { name: "zebra", source: "user" },
-      { name: "alpha", source: "user" },
-    ];
-    const result = mergeSlashCommands(["mcp", "clear"], userCmds);
-    const names = result.map((c) => c.name);
-    expect(names).toEqual([...names].sort());
+  it("false when textarea has more than just /", () => {
+    const win = makeWindow();
+    const ta = makeTextarea(win, "/c");
+    expect(isFreshSlashTrigger(ta, makeInputEvent(win, { data: "c", inputType: "insertText" }))).toBe(false);
   });
 
-  it("CLI list deduplication — duplicate CLI names produce single entry", () => {
-    const result = mergeSlashCommands(["compact", "compact", "clear"], []);
-    const compactEntries = result.filter((c) => c.name === "compact");
-    expect(compactEntries).toHaveLength(1);
+  it("false during IME composition", () => {
+    const win = makeWindow();
+    const ta = makeTextarea(win, "/");
+    expect(
+      isFreshSlashTrigger(ta, makeInputEvent(win, { data: "/", inputType: "insertText", isComposing: true })),
+    ).toBe(false);
   });
 
-  it("CLI command description is undefined by default", () => {
-    const result = mergeSlashCommands(["compact"], []);
-    expect(result[0].description).toBeUndefined();
+  it("false on paste", () => {
+    const win = makeWindow();
+    const ta = makeTextarea(win, "/");
+    expect(
+      isFreshSlashTrigger(ta, makeInputEvent(win, { data: "/", inputType: "insertFromPaste" })),
+    ).toBe(false);
+  });
+});
+
+// ─── findActiveSlashToken ─────────────────────────────────────────────────────
+
+describe("findActiveSlashToken", () => {
+  it("returns query for /<chars>", () => {
+    const win = makeWindow();
+    const ta = makeTextarea(win, "/we");
+    ta.selectionStart = 3;
+    expect(findActiveSlashToken(ta)).toEqual({ query: "we" });
   });
 
-  it("user command description is preserved", () => {
-    const userCmds: SlashCommand[] = [
-      { name: "my-cmd", source: "user", description: "First non-empty line" },
-    ];
-    const result = mergeSlashCommands([], userCmds);
-    expect(result[0].description).toBe("First non-empty line");
+  it("returns null once user types whitespace (now in args)", () => {
+    const win = makeWindow();
+    const ta = makeTextarea(win, "/foo bar");
+    ta.selectionStart = 8;
+    expect(findActiveSlashToken(ta)).toBeNull();
+  });
+
+  it("returns null when value does not start with /", () => {
+    const win = makeWindow();
+    const ta = makeTextarea(win, "hello");
+    expect(findActiveSlashToken(ta)).toBeNull();
+  });
+});
+
+// ─── applySlashCommand ────────────────────────────────────────────────────────
+
+describe("applySlashCommand", () => {
+  it("replaces textarea contents with /<name> ", () => {
+    const win = makeWindow();
+    const ta = makeTextarea(win, "/we");
+    applySlashCommand(ta, "weekly-review");
+    expect(ta.value).toBe("/weekly-review ");
+    expect(ta.selectionStart).toBe("/weekly-review ".length);
+  });
+});
+
+// ─── createSlashMenuDriver ────────────────────────────────────────────────────
+
+describe("createSlashMenuDriver", () => {
+  it("opens popover on fresh / in empty textarea", () => {
+    const win = makeWindow();
+    const ta = makeTextarea(win, "/");
+    ta.selectionStart = 1;
+
+    const handle = fakePopoverHandle();
+    const openPopover = vi.fn().mockReturnValue(handle);
+    const searchCommands = vi.fn().mockReturnValue([
+      { id: "cli:clear", label: "/clear", metadata: "clear" },
+    ] satisfies PopoverItem[]);
+
+    const driver = createSlashMenuDriver({
+      textarea: ta,
+      searchCommands,
+      openPopover,
+    });
+    driver.onInput(makeInputEvent(win, { data: "/", inputType: "insertText" }));
+
+    expect(openPopover).toHaveBeenCalledOnce();
+    expect(searchCommands).toHaveBeenCalledWith("");
+  });
+
+  it("does NOT open popover when / is mid-text", () => {
+    const win = makeWindow();
+    const ta = makeTextarea(win, "path/");
+    ta.selectionStart = 5;
+
+    const openPopover = vi.fn();
+    const driver = createSlashMenuDriver({
+      textarea: ta,
+      searchCommands: () => [],
+      openPopover: openPopover as never,
+    });
+    driver.onInput(makeInputEvent(win, { data: "/", inputType: "insertText" }));
+
+    expect(openPopover).not.toHaveBeenCalled();
+  });
+
+  it("on select: rewrites textarea to /<name> and disposes popover", () => {
+    const win = makeWindow();
+    const ta = makeTextarea(win, "/");
+    ta.selectionStart = 1;
+
+    const handle = fakePopoverHandle() as InlinePopoverHandle & { disposed: boolean };
+    let capturedSelect: ((item: PopoverItem) => void) | null = null;
+    const openPopover = vi.fn((_items, onSelect) => {
+      capturedSelect = onSelect;
+      return handle;
+    });
+
+    const driver = createSlashMenuDriver({
+      textarea: ta,
+      searchCommands: () => [{ id: "cli:weekly", label: "/weekly", metadata: "weekly" }],
+      openPopover: openPopover as never,
+    });
+    driver.onInput(makeInputEvent(win, { data: "/", inputType: "insertText" }));
+
+    capturedSelect!({ id: "cli:weekly", label: "/weekly", metadata: "weekly" });
+    expect(ta.value).toBe("/weekly ");
+    expect(handle.disposed).toBe(true);
+  });
+
+  it("dismisses popover when user deletes the /", () => {
+    const win = makeWindow();
+    const ta = makeTextarea(win, "/");
+    ta.selectionStart = 1;
+
+    const handle = fakePopoverHandle() as InlinePopoverHandle & { disposed: boolean };
+    const driver = createSlashMenuDriver({
+      textarea: ta,
+      searchCommands: () => [],
+      openPopover: vi.fn().mockReturnValue(handle),
+    });
+    driver.onInput(makeInputEvent(win, { data: "/", inputType: "insertText" }));
+
+    ta.value = "";
+    ta.selectionStart = 0;
+    driver.onInput(makeInputEvent(win, { inputType: "deleteContentBackward" }));
+
+    expect(handle.disposed).toBe(true);
   });
 });

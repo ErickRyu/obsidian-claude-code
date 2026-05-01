@@ -39,12 +39,12 @@ export interface InputBarOptions {
    */
   readonly onAtInput?: (e: Event) => void;
   /**
-   * Optional `/`-key handler invoked at the start of the keydown listener,
-   * before Enter handling. Return `true` to short-circuit further processing
-   * (the caller has opened the slash command menu and called preventDefault).
-   * Return `false` / `undefined` to let the normal Enter logic run.
+   * Optional handler called on every `input` event AFTER `onAtInput`.
+   * Used by the / slash command popover. Same rationale as `onAtInput`:
+   * the `/` lands in the textarea before this fires, eliminating the
+   * keydown-vs-modal race.
    */
-  readonly onSlashTrigger?: (e: KeyboardEvent) => boolean;
+  readonly onSlashInput?: (e: Event) => void;
 }
 
 /** Narrowed `registerDomEvent` signature — mirrors Obsidian's overload. */
@@ -134,7 +134,6 @@ export function buildInputBar(
   });
 
   register(textareaEl, "keydown", (e) => {
-    if (options.onSlashTrigger?.(e) === true) return;
     if (e.isComposing) return;
     if (e.key !== "Enter") return;
     if (e.shiftKey) return;
@@ -144,6 +143,7 @@ export function buildInputBar(
 
   register(textareaEl, "input", (e) => {
     options.onAtInput?.(e);
+    options.onSlashInput?.(e);
     autoResize();
   });
 

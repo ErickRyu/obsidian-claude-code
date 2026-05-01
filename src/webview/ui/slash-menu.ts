@@ -1,227 +1,233 @@
 /**
- * Slash command menu — Phase 3 UX input bar enhancement.
+ * / slash command trigger.
  *
- * Two sections:
- *   1. Pure helpers (testable under happy-dom):
- *      - SlashCommand / SlashCommandSource / SlashMenuDeps interfaces
- *      - shouldTriggerSlash(textarea, e) — guard predicate
- *      - handleSlashKey(deps, e) — intercept + open modal
- *      - mergeSlashCommands(cli, user) — dedupe + sort
+ * Opens an inline popover when `/` is the first character in an otherwise
+ * empty textarea. Sources merged on every popover update:
+ *   - CLI builtins reported via `system.init.slash_commands`
+ *   - User vault commands in `<vault>/.claude/commands/*.md`
+ *   - Global commands in `~/.claude/commands/*.md`
  *
- *   2. Obsidian-coupled class (NOT tested under happy-dom):
- *      - SlashCommandModal extends SuggestModal<SlashCommand>
- *
- * Trigger rule: only fire when the textarea is completely empty AND the user
- * presses "/" with no modifier keys and outside IME composition.
- * This avoids false positives when typing paths like "path/to/file".
- *
- * Safety: selecting a command WRITES the text to the textarea (/<name> ) but
- * does NOT auto-submit. The user must press Cmd/Ctrl+Enter explicitly. This
- * prevents accidental execution of destructive commands like /clear.
+ * On select, the textarea becomes `/<name> ` so the user can add args
+ * before pressing Enter (no auto-execution — `/clear` etc. shouldn't
+ * fire from a single keystroke + click).
  */
-import { App, SuggestModal, prepareFuzzySearch } from "obsidian";
 
-// ---------------------------------------------------------------------------
-// Interfaces
-// ---------------------------------------------------------------------------
+import type { PopoverItem, InlinePopoverHandle } from "./inline-popover";
+
+export type SlashCommandSource = "cli" | "user" | "global";
 
 export interface SlashCommand {
   readonly name: string;
-  readonly source: "cli" | "user";
+  readonly source: SlashCommandSource;
   readonly description?: string;
 }
 
-export interface SlashCommandSource {
+export interface SlashCommandSourceProvider {
   list(): SlashCommand[];
 }
 
-export interface SlashMenuDeps {
-  readonly textarea: HTMLTextAreaElement;
-  readonly source: SlashCommandSource;
-  readonly openModal: (
-    items: readonly SlashCommand[],
-    onSelect: (cmd: SlashCommand) => void,
-    onDismiss: () => void
-  ) => void;
-}
-
-// ---------------------------------------------------------------------------
-// Pure helpers
-// ---------------------------------------------------------------------------
-
 /**
- * Returns true iff the keyboard event should trigger the slash command menu.
- * Conditions (all must be true):
- *   - e.key === "/"
- *   - textarea.value.length === 0
- *   - !e.isComposing
- *   - !e.metaKey && !e.ctrlKey && !e.altKey
- */
-export function shouldTriggerSlash(
-  textarea: HTMLTextAreaElement,
-  e: KeyboardEvent
-): boolean {
-  if (e.key !== "/") return false;
-  if (textarea.value.length !== 0) return false;
-  if (e.isComposing) return false;
-  if (e.metaKey || e.ctrlKey || e.altKey) return false;
-  return true;
-}
-
-/**
- * Handles a keydown event that may be a slash trigger.
- * Returns true if the event was intercepted (openModal was called).
- *
- * Side effects when intercepted:
- *   - e.preventDefault() is called
- *   - openModal is called with the current source.list() result
- *   - onSelect writes "/<cmd.name> " to the textarea, dispatches "input"
- *   - onDismiss writes "/" to the textarea, dispatches "input"
- */
-export function handleSlashKey(deps: SlashMenuDeps, e: KeyboardEvent): boolean {
-  if (!shouldTriggerSlash(deps.textarea, e)) return false;
-
-  e.preventDefault();
-
-  const items = deps.source.list();
-  let selected = false;
-
-  const dispatchInputEvent = (ta: HTMLTextAreaElement): void => {
-    // Use the document's Event constructor to stay in the same DOM context.
-    // In happy-dom, the global `Event` is different from the document-scoped one,
-    // so we use `ta.ownerDocument.createEvent` to create a compatible event.
-    const doc = ta.ownerDocument;
-    if (doc && typeof doc.createEvent === "function") {
-      const ev = doc.createEvent("Event");
-      ev.initEvent("input", true, false);
-      ta.dispatchEvent(ev);
-    }
-  };
-
-  const onSelect = (cmd: SlashCommand): void => {
-    selected = true;
-    deps.textarea.value = `/${cmd.name} `;
-    // Place cursor at end
-    const len = deps.textarea.value.length;
-    try {
-      deps.textarea.setSelectionRange(len, len);
-    } catch {
-      // Ignore — happy-dom may not fully implement setSelectionRange.
-    }
-    dispatchInputEvent(deps.textarea);
-  };
-
-  const onDismiss = (): void => {
-    if (selected) return; // Already handled by onSelect path.
-    deps.textarea.value = "/";
-    const len = deps.textarea.value.length;
-    try {
-      deps.textarea.setSelectionRange(len, len);
-    } catch {
-      // Ignore.
-    }
-    dispatchInputEvent(deps.textarea);
-  };
-
-  deps.openModal(items, onSelect, onDismiss);
-  return true;
-}
-
-/**
- * Merges CLI builtin commands and user-defined commands into a single sorted
- * deduplicated list.
- *
- * Deduplication rule: when CLI and user share the same name, CLI wins.
- * Result is sorted alphabetically by name.
+ * Merges CLI builtin command names + user (vault) commands + global
+ * (`~/.claude/commands`) commands into a single deduped, sorted list.
+ * Earlier sources win on name collision: cli > user > global.
  */
 export function mergeSlashCommands(
   cli: readonly string[],
-  user: readonly SlashCommand[]
+  user: readonly SlashCommand[],
+  global: readonly SlashCommand[] = [],
 ): SlashCommand[] {
-  // Build map from name → command; user commands go in first, then CLI
-  // overwrites on conflict (so CLI always wins).
-  const map = new Map<string, SlashCommand>();
-
-  for (const cmd of user) {
-    if (!map.has(cmd.name)) {
-      map.set(cmd.name, cmd);
-    }
-  }
-
+  const seen = new Set<string>();
+  const out: SlashCommand[] = [];
   for (const name of cli) {
-    // CLI always wins — overwrite any user entry with the same name.
-    map.set(name, { name, source: "cli" });
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, source: "cli" });
   }
-
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  for (const c of user) {
+    if (seen.has(c.name)) continue;
+    seen.add(c.name);
+    out.push(c);
+  }
+  for (const c of global) {
+    if (seen.has(c.name)) continue;
+    seen.add(c.name);
+    out.push(c);
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
 }
 
-// ---------------------------------------------------------------------------
-// Obsidian-coupled modal (not testable under happy-dom)
-// ---------------------------------------------------------------------------
+/**
+ * Returns true if a fresh `/` keystroke at the start of an otherwise
+ * empty textarea should open the popover.
+ */
+export function isFreshSlashTrigger(
+  textarea: HTMLTextAreaElement,
+  e: Event,
+): boolean {
+  const ie = e as InputEvent;
+  if ("isComposing" in ie && ie.isComposing === true) return false;
+  if (
+    "inputType" in ie &&
+    ie.inputType !== undefined &&
+    ie.inputType !== "insertText"
+  ) {
+    return false;
+  }
+  if ("data" in ie && ie.data !== undefined && ie.data !== "/") return false;
+
+  const value = textarea.value;
+  if (value.length !== 1) return false;
+  if (value[0] !== "/") return false;
+  return true;
+}
 
 /**
- * SuggestModal that lists slash commands with fuzzy filtering.
- *
- * Constructor params:
- *   app       — Obsidian App instance
- *   items     — full slash command list (already merged + sorted)
- *   onSelect  — called when user picks a command
- *   onDismiss — called when user presses Esc without selecting
+ * Returns the running slash token if the textarea begins with `/` and
+ * the cursor is still inside the command-name region (no whitespace yet).
+ * The query is everything after `/` up to the cursor.
  */
-export class SlashCommandModal extends SuggestModal<SlashCommand> {
-  private readonly items: readonly SlashCommand[];
-  private readonly _onSelect: (cmd: SlashCommand) => void;
-  private readonly _onDismiss: () => void;
-  private didSelect = false;
+export function findActiveSlashToken(
+  textarea: HTMLTextAreaElement,
+): { query: string } | null {
+  const value = textarea.value;
+  if (value.length === 0) return null;
+  if (value[0] !== "/") return null;
+  const cursor = textarea.selectionStart ?? value.length;
+  const beforeCursor = value.slice(0, cursor);
+  if (/\s/.test(beforeCursor)) return null;
+  return { query: beforeCursor.slice(1) };
+}
 
-  constructor(
-    app: App,
-    items: readonly SlashCommand[],
-    onSelect: (cmd: SlashCommand) => void,
-    onDismiss: () => void
-  ) {
-    super(app);
-    this.items = items;
-    this._onSelect = onSelect;
-    this._onDismiss = onDismiss;
-    this.setPlaceholder("Type to filter slash commands…");
-  }
+/**
+ * Replaces the textarea contents with `/<name> ` (with trailing space so
+ * the user types args next).
+ */
+export function applySlashCommand(
+  textarea: HTMLTextAreaElement,
+  name: string,
+): void {
+  textarea.value = `/${name} `;
+  const pos = textarea.value.length;
+  textarea.selectionStart = pos;
+  textarea.selectionEnd = pos;
+  textarea.focus();
 
-  getSuggestions(query: string): SlashCommand[] {
-    const q = query.trim().toLowerCase();
-    if (q.length === 0) return [...this.items];
+  const EventCtor: typeof Event =
+    (textarea.ownerDocument?.defaultView as unknown as { Event: typeof Event } | null)
+      ?.Event ?? Event;
+  textarea.dispatchEvent(new EventCtor("input", { bubbles: true }));
+}
 
-    const fuzzy = prepareFuzzySearch(q);
-    return this.items.filter((cmd) => {
-      if (fuzzy(cmd.name)) return true;
-      if (cmd.description && fuzzy(cmd.description)) return true;
-      return false;
-    });
-  }
+export interface SlashMenuRuntime {
+  readonly textarea: HTMLTextAreaElement;
+  /** Returns popover items for the current query. */
+  readonly searchCommands: (query: string) => PopoverItem[];
+  /** Mounts the popover. */
+  readonly openPopover: (
+    items: readonly PopoverItem[],
+    onSelect: (item: PopoverItem) => void,
+    onDismiss: () => void,
+  ) => InlinePopoverHandle;
+}
 
-  renderSuggestion(cmd: SlashCommand, el: HTMLElement): void {
-    el.addClass("claude-wv-slash-item");
+/**
+ * Returns a driver hooked into the textarea's `input` event. The driver
+ * opens the popover on a fresh `/` and updates / closes it as the user
+ * keeps typing.
+ */
+export function createSlashMenuDriver(runtime: SlashMenuRuntime): {
+  onInput: (e: Event) => void;
+  dispose: () => void;
+} {
+  let popover: InlinePopoverHandle | null = null;
 
-    const nameEl = el.createEl("span", { cls: "claude-wv-slash-name" });
-    nameEl.textContent = `/${cmd.name}`;
-
-    const sourceEl = el.createEl("small", { cls: "claude-wv-slash-source" });
-    sourceEl.textContent = `[${cmd.source}]`;
-
-    const descEl = el.createEl("small", { cls: "claude-wv-slash-desc" });
-    descEl.textContent = cmd.description ?? "";
-  }
-
-  onChooseSuggestion(cmd: SlashCommand, _evt: MouseEvent | KeyboardEvent): void {
-    this.didSelect = true;
-    this._onSelect(cmd);
-  }
-
-  onClose(): void {
-    super.onClose();
-    if (!this.didSelect) {
-      this._onDismiss();
+  const close = (): void => {
+    if (popover) {
+      popover.dispose();
+      popover = null;
     }
+  };
+
+  const open = (query: string): void => {
+    const items = runtime.searchCommands(query);
+    popover = runtime.openPopover(
+      items,
+      (item) => {
+        const name = String(item.metadata ?? item.label.replace(/^\//, ""));
+        applySlashCommand(runtime.textarea, name);
+        close();
+      },
+      () => close(),
+    );
+  };
+
+  const onInput = (e: Event): void => {
+    const ta = runtime.textarea;
+    const token = findActiveSlashToken(ta);
+
+    if (popover) {
+      if (!token) {
+        close();
+        return;
+      }
+      popover.update(runtime.searchCommands(token.query));
+      return;
+    }
+
+    if (!isFreshSlashTrigger(ta, e)) return;
+    if (!token) return;
+    open(token.query);
+  };
+
+  return { onInput, dispose: close };
+}
+
+/**
+ * Reads `~/.claude/commands/*.md`. Returns SlashCommand entries with the
+ * first non-empty, non-frontmatter line as description. All errors
+ * (folder missing, permission denied, malformed file) are silenced and
+ * yield an empty list.
+ *
+ * Uses Node's `fs/promises` — safe under Obsidian desktop, not under
+ * happy-dom unit tests (which simply get [] from the catch).
+ */
+export async function listGlobalSlashCommands(
+  homeDir: string | undefined = typeof process !== "undefined"
+    ? process.env.HOME ?? process.env.USERPROFILE
+    : undefined,
+): Promise<SlashCommand[]> {
+  if (!homeDir) return [];
+  let fsP: typeof import("node:fs/promises");
+  let pathMod: typeof import("node:path");
+  try {
+    fsP = await import("node:fs/promises");
+    pathMod = await import("node:path");
+  } catch {
+    return [];
   }
+  const dir = pathMod.join(homeDir, ".claude", "commands");
+  let entries: string[];
+  try {
+    entries = await fsP.readdir(dir);
+  } catch {
+    return [];
+  }
+  const out: SlashCommand[] = [];
+  for (const file of entries) {
+    if (!file.endsWith(".md")) continue;
+    const name = file.replace(/\.md$/, "");
+    let description: string | undefined;
+    try {
+      const content = await fsP.readFile(pathMod.join(dir, file), "utf-8");
+      const firstLine = content
+        .split("\n")
+        .find((l) => l.trim().length > 0 && !l.trim().startsWith("---"));
+      if (firstLine) description = firstLine.trim().replace(/^#\s*/, "").slice(0, 200);
+    } catch {
+      // Skip — emit the command name without a description.
+    }
+    out.push({ name, source: "global", description });
+  }
+  return out;
 }
