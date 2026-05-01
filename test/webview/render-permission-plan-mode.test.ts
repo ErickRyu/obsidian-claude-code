@@ -17,6 +17,7 @@ import {
   createUserToolResultState,
   renderUserToolResult,
 } from "../../src/webview/renderers/user-tool-result";
+import { createActivityGroupState } from "../../src/webview/renderers/activity-group";
 import {
   createResultState,
   renderResult,
@@ -89,15 +90,16 @@ function renderFixture(fixtureFile: string): {
   const editDiffState = createEditDiffState();
   const toolResultState = createUserToolResultState();
   const resultState = createResultState();
+  const groupState = createActivityGroupState();
 
   for (const ev of events) {
     if (ev.type === "system" && ev.subtype === "init") {
       renderSystemInit(systemInitState, parent, ev as SystemInitEvent, doc);
     } else if (ev.type === "assistant") {
-      renderAssistantToolUse(toolUseState, parent, ev as AssistantEvent, doc);
+      renderAssistantToolUse(toolUseState, groupState, parent, ev as AssistantEvent, doc);
       renderEditDiff(editDiffState, parent, ev as AssistantEvent, doc);
     } else if (ev.type === "user") {
-      renderUserToolResult(toolResultState, parent, ev as UserEvent, doc);
+      renderUserToolResult(toolResultState, groupState, parent, ev as UserEvent, doc);
     } else if (ev.type === "result") {
       renderResult(resultState, parent, ev as ResultEvent, doc);
     }
@@ -252,19 +254,23 @@ describe("plan-mode.jsonl rendering (AC 3 Sub-AC 3)", () => {
     );
   });
 
-  it("marks the AskUserQuestion tool_result card with data-is-error='true'", () => {
+  it("marks the AskUserQuestion tool-line with data-is-error='true' on its tool_result", () => {
+    // 2026-05-01 dogfood: tool_result no longer renders a separate card —
+    // it stamps `data-is-error` onto the matching tool-line instead. The
+    // tool-line element is the one created by assistant-tool-use, so look
+    // it up in `toolUseCards`.
     const { scene } = renderFixture(FIXTURE);
     const askUserQuestionId = "toolu_01Nq9d8dWoF8BMKyDLSux1Es";
     const toolSearchId = "toolu_0135LphYuBXgwLbWAHiwjeVT";
-    const askErrorCard = scene.toolResultCards.get(askUserQuestionId);
-    expect(askErrorCard).toBeDefined();
-    if (!askErrorCard) return;
-    // Differential check: plan-mode's AskUserQuestion result has is_error=true
+    const askErrorLine = scene.toolUseCards.get(askUserQuestionId);
+    expect(askErrorLine).toBeDefined();
+    if (!askErrorLine) return;
+    // Differential: plan-mode's AskUserQuestion result has is_error=true
     // in the fixture, but the ToolSearch result does not.
-    expect(askErrorCard.getAttribute("data-is-error")).toBe("true");
-    const toolSearchResult = scene.toolResultCards.get(toolSearchId);
-    expect(toolSearchResult).toBeDefined();
-    expect(toolSearchResult?.hasAttribute("data-is-error")).toBe(false);
+    expect(askErrorLine.getAttribute("data-is-error")).toBe("true");
+    const toolSearchLine = scene.toolUseCards.get(toolSearchId);
+    expect(toolSearchLine).toBeDefined();
+    expect(toolSearchLine?.hasAttribute("data-is-error")).toBe(false);
   });
 
   it("thinking block is present in the parsed assistant events (plan-mode signal)", () => {

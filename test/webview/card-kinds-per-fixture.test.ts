@@ -59,6 +59,10 @@ import {
   createEditDiffState,
   renderEditDiff,
 } from "../../src/webview/renderers/edit-diff";
+import {
+  createActivityGroupState,
+  closeActivityGroup,
+} from "../../src/webview/renderers/activity-group";
 import type {
   AssistantEvent,
   ResultEvent,
@@ -74,11 +78,19 @@ const FIXTURE_DIR = path.resolve(
   "stream-json",
 );
 
-/** The card kinds Phase 2 renderers emit — CSS modifier suffix form. */
+/**
+ * The card kinds Phase 2 renderers emit — CSS modifier suffix form.
+ *
+ * 2026-05-01 dogfood: `assistant-tool-use` is no longer a card — generic
+ * tool calls render as `.claude-wv-tool-line` *inside* an `activity-group`
+ * container card. `user-tool-result` only appears as a card in the orphan
+ * fallback path; the green path attaches its body into the matching tool
+ * line. Counts below reflect that change.
+ */
 const CARD_KIND_UNIVERSE: ReadonlySet<string> = new Set([
   "system-init",
   "assistant-text",
-  "assistant-tool-use",
+  "activity-group",
   "edit-diff",
   "user-tool-result",
   "result",
@@ -105,19 +117,21 @@ const EXPECTED: ReadonlyArray<FixtureExpectation> = [
     cardCountByKind: {
       "system-init": 1,
       "assistant-text": 1,
-      "assistant-tool-use": 0,
+      "activity-group": 0,
       "user-tool-result": 0,
       result: 1,
     },
   },
   {
     fixture: "edit.jsonl",
-    // edit.jsonl uses Edit (1) + Read (1). After 2026-04-29 dogfood fix,
-    // Edit goes through edit-diff exclusively (not assistant-tool-use).
+    // edit.jsonl uses Edit (1) + Read (1). Edit goes through edit-diff;
+    // Read becomes a tool-line inside an activity-group container card.
+    // The Read tool_result attaches into that line (no fallback card),
+    // so only the Edit's tool_result lands as a fallback user-tool-result.
     cardKinds: new Set([
       "system-init",
       "assistant-text",
-      "assistant-tool-use",
+      "activity-group",
       "edit-diff",
       "user-tool-result",
       "result",
@@ -125,15 +139,17 @@ const EXPECTED: ReadonlyArray<FixtureExpectation> = [
     cardCountByKind: {
       "system-init": 1,
       "assistant-text": 2,
-      "assistant-tool-use": 1,
+      "activity-group": 1,
       "edit-diff": 1,
-      "user-tool-result": 2,
+      "user-tool-result": 1,
       result: 1,
     },
   },
   {
     fixture: "permission.jsonl",
-    // permission.jsonl uses Write — now exclusively edit-diff.
+    // permission.jsonl uses Write — exclusively edit-diff. The Write
+    // tool_result has no matching tool-line (Write doesn't emit a line)
+    // so it lands as a fallback user-tool-result card.
     cardKinds: new Set([
       "system-init",
       "assistant-text",
@@ -144,7 +160,7 @@ const EXPECTED: ReadonlyArray<FixtureExpectation> = [
     cardCountByKind: {
       "system-init": 1,
       "assistant-text": 2,
-      "assistant-tool-use": 0,
+      "activity-group": 0,
       "edit-diff": 1,
       "user-tool-result": 1,
       result: 1,
@@ -152,18 +168,20 @@ const EXPECTED: ReadonlyArray<FixtureExpectation> = [
   },
   {
     fixture: "plan-mode.jsonl",
+    // plan-mode.jsonl uses ToolSearch + AskUserQuestion (both generic tools
+    // → tool-lines inside one activity-group). Their tool_results attach
+    // into the matching lines — no fallback user-tool-result cards.
     cardKinds: new Set([
       "system-init",
       "assistant-text",
-      "assistant-tool-use",
-      "user-tool-result",
+      "activity-group",
       "result",
     ]),
     cardCountByKind: {
       "system-init": 1,
       "assistant-text": 1,
-      "assistant-tool-use": 2,
-      "user-tool-result": 2,
+      "activity-group": 1,
+      "user-tool-result": 0,
       result: 1,
     },
   },
@@ -174,7 +192,7 @@ const EXPECTED: ReadonlyArray<FixtureExpectation> = [
     cardCountByKind: {
       "system-init": 0,
       "assistant-text": 0,
-      "assistant-tool-use": 0,
+      "activity-group": 0,
       "user-tool-result": 0,
       result: 1,
     },
@@ -188,7 +206,7 @@ const EXPECTED: ReadonlyArray<FixtureExpectation> = [
     cardCountByKind: {
       "system-init": 1,
       "assistant-text": 0,
-      "assistant-tool-use": 0,
+      "activity-group": 0,
       "user-tool-result": 0,
       result: 1,
     },
@@ -200,31 +218,32 @@ const EXPECTED: ReadonlyArray<FixtureExpectation> = [
     cardCountByKind: {
       "system-init": 1,
       "assistant-text": 0,
-      "assistant-tool-use": 0,
+      "activity-group": 0,
       "user-tool-result": 0,
       result: 1,
     },
   },
   {
     fixture: "todo.jsonl",
-    // Phase 4b: TodoWrite is hoisted by the dedicated todo-panel renderer
-    // and no longer produces an `assistant-tool-use` card — only ToolSearch
-    // remains in the generic path. The phase-2-scoped dispatcher below does
-    // not call the todo-panel renderer, so the todo-summary card is not
-    // counted here; the SH-03 / 4b-4 gate verifies the summary card via
-    // `scripts/render-fixture.ts` on `artifacts/phase-4b/render-todo.json`.
+    // TodoWrite is hoisted by the dedicated todo-panel renderer and no
+    // longer produces a generic line — only ToolSearch remains in the
+    // generic path → activity-group card. The TodoWrite tool_result is
+    // suppressed in the green path when its summary card is present, but
+    // this dispatcher does not call renderTodoPanel (so no summary card)
+    // — so the TodoWrite result lands as a fallback user-tool-result.
+    // ToolSearch's result attaches into its tool-line.
     cardKinds: new Set([
       "system-init",
       "assistant-text",
-      "assistant-tool-use",
+      "activity-group",
       "user-tool-result",
       "result",
     ]),
     cardCountByKind: {
       "system-init": 1,
       "assistant-text": 1,
-      "assistant-tool-use": 1,
-      "user-tool-result": 2,
+      "activity-group": 1,
+      "user-tool-result": 1,
       result: 1,
     },
   },
@@ -267,19 +286,42 @@ function renderFixtureToCards(fixturePath: string): RenderResult {
   const editDiffState = createEditDiffState();
   const userToolResultState = createUserToolResultState();
   const resultState = createResultState();
+  const groupState = createActivityGroupState();
 
   for (const ev of events) {
     if (isSystemInit(ev)) {
       renderSystemInit(sysInitState, parent, ev, doc);
     } else if (isAssistant(ev)) {
-      // 2026-04-29: assistant-tool-use now skips Edit/Write (those go
-      // through edit-diff exclusively). Mirror view.ts dispatch order.
+      // Mirror view.ts dispatch order + activity-group lifecycle.
+      const blocks = ev.message.content;
+      const closesGroup = blocks.some(
+        (b) =>
+          (b.type === "text" && b.text.length > 0) ||
+          (b.type === "tool_use" &&
+            (b.name === "Edit" ||
+              b.name === "Write" ||
+              b.name === "TodoWrite")),
+      );
+      if (closesGroup) {
+        closeActivityGroup(groupState);
+      }
       renderAssistantText(assistantTextState, parent, ev, doc);
-      renderAssistantToolUse(assistantToolUseState, parent, ev, doc);
+      renderAssistantToolUse(assistantToolUseState, groupState, parent, ev, doc);
       renderEditDiff(editDiffState, parent, ev, doc);
     } else if (isUser(ev)) {
-      renderUserToolResult(userToolResultState, parent, ev, doc);
+      const userContent = ev.message.content;
+      let userHasPlainText = false;
+      if (typeof userContent === "string") {
+        userHasPlainText = userContent.length > 0;
+      } else if (Array.isArray(userContent)) {
+        userHasPlainText = userContent.some((b) => b.type === "text");
+      }
+      if (userHasPlainText) {
+        closeActivityGroup(groupState);
+      }
+      renderUserToolResult(userToolResultState, groupState, parent, ev, doc);
     } else if (isResult(ev)) {
+      closeActivityGroup(groupState);
       renderResult(resultState, parent, ev, doc);
     }
     // Other event types (rate_limit_event, system hooks / status / compact
@@ -368,16 +410,16 @@ describe("AC 5 — per-fixture cardKinds Set membership and cardCountByKind", ()
     const hello = renderFixtureToCards(path.join(FIXTURE_DIR, "hello.jsonl"));
     const edit = renderFixtureToCards(path.join(FIXTURE_DIR, "edit.jsonl"));
     // Every kind hello emits must also appear in edit (system-init, assistant-
-    // text, result), but edit additionally emits tool_use + tool_result cards
-    // that hello never does — proves renderers are content-driven, not
-    // hardcoded per fixture.
+    // text, result), but edit additionally emits activity-group + edit-diff
+    // + a fallback user-tool-result card that hello never does — proves
+    // renderers are content-driven, not hardcoded per fixture.
     for (const k of hello.cardKinds) {
       expect(edit.cardKinds.has(k)).toBe(true);
     }
     expect(edit.cardKinds.size).toBeGreaterThan(hello.cardKinds.size);
-    expect(edit.cardKinds.has("assistant-tool-use")).toBe(true);
+    expect(edit.cardKinds.has("activity-group")).toBe(true);
     expect(edit.cardKinds.has("user-tool-result")).toBe(true);
-    expect(hello.cardKinds.has("assistant-tool-use")).toBe(false);
+    expect(hello.cardKinds.has("activity-group")).toBe(false);
     expect(hello.cardKinds.has("user-tool-result")).toBe(false);
   });
 

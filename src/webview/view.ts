@@ -38,6 +38,11 @@ import {
   type UserToolResultRenderState,
 } from "./renderers/user-tool-result";
 import {
+  createActivityGroupState,
+  closeActivityGroup,
+  type ActivityGroupRenderState,
+} from "./renderers/activity-group";
+import {
   createUserTextState,
   renderUserText,
   appendUserPrompt,
@@ -240,6 +245,13 @@ interface RendererStates {
   readonly systemStatus: SystemStatusRenderState;
   readonly systemHook: SystemHookRenderState;
   readonly compactBoundary: CompactBoundaryRenderState;
+  // 2026-05-01 dogfood: activity-group container that hosts consecutive
+  // generic tool_use lines from the assistant. Mutable bookkeeping
+  // (current group element, tool count, pending tally) lives in the
+  // state object; the dispatcher closes the active group when an
+  // event arrives that visually ends the tool burst (assistant text,
+  // Edit/Write diff, TodoWrite panel, plain user turn).
+  readonly activityGroup: ActivityGroupRenderState;
 }
 
 function toFilePopoverItem(file: TFile): PopoverItem {
@@ -435,6 +447,7 @@ export class ClaudeWebviewView extends ItemView {
       systemStatus: createSystemStatusState(),
       systemHook: createSystemHookState(),
       compactBoundary: createCompactBoundaryState(),
+      activityGroup: createActivityGroupState(),
     };
     this.statusBar = buildStatusBar(this.layout.headerEl, doc);
     buildVersionBadge(this.layout.headerEl, {
@@ -1005,11 +1018,36 @@ export class ClaudeWebviewView extends ItemView {
     const showDebug = renderOptions?.showDebugSystemEvents ?? false;
     const renderMarkdown = runtime?.renderMarkdown;
     switch (event.type) {
-      case "assistant":
+      case "assistant": {
+        // 2026-05-01 dogfood: any text / Edit-Write diff / TodoWrite
+        // block in this assistant message visually ends the prior burst
+        // of generic tool calls, so the active activity group should
+        // close before the corresponding renderer runs. Generic
+        // tool_use blocks themselves keep the group open (or open a
+        // new one if none is active) — that work happens inside
+        // `renderAssistantToolUse`.
+        const blocks = event.message.content;
+        const closesGroup = blocks.some(
+          (b) =>
+            (b.type === "text" && b.text.length > 0) ||
+            (b.type === "tool_use" &&
+              (b.name === "Edit" ||
+                b.name === "Write" ||
+                b.name === "TodoWrite")),
+        );
+        if (closesGroup) {
+          closeActivityGroup(states.activityGroup);
+        }
         renderAssistantText(states.assistantText, cards, event, doc, {
           renderMarkdown,
         });
-        renderAssistantToolUse(states.assistantToolUse, cards, event, doc);
+        renderAssistantToolUse(
+          states.assistantToolUse,
+          states.activityGroup,
+          cards,
+          event,
+          doc,
+        );
         renderAssistantThinking(
           states.assistantThinking,
           cards,
@@ -1026,15 +1064,38 @@ export class ClaudeWebviewView extends ItemView {
           doc,
         );
         return;
-      case "user":
+      }
+      case "user": {
+        // Plain user text starts a new turn → close any active group so
+        // the next assistant tool burst opens a fresh container. A pure
+        // tool_result user message keeps the group open since it's
+        // resolving the calls it just hosts.
+        const userContent = event.message.content;
+        let userHasPlainText = false;
+        if (typeof userContent === "string") {
+          userHasPlainText = userContent.length > 0;
+        } else if (Array.isArray(userContent)) {
+          userHasPlainText = userContent.some((b) => b.type === "text");
+        }
+        if (userHasPlainText) {
+          closeActivityGroup(states.activityGroup);
+        }
+
         renderUserText(states.userText, cards, event, doc);
-        renderUserToolResult(states.userToolResult, cards, event, doc);
+        renderUserToolResult(
+          states.userToolResult,
+          states.activityGroup,
+          cards,
+          event,
+          doc,
+        );
         // 2026-04-29 dogfood Issue #2 (tool-pending resolved): every
         // `tool_result` block in this user event resolves the matching
-        // `assistant.tool_use` card's pending spinner. Iterate sibling
-        // tool_use cards by `data-tool-use-id` (no querySelector — the
-        // tool id format is `toolu_<hex>` but skipping CSS.escape keeps
-        // happy-dom compatibility tight).
+        // tool-line's pending spinner. The active-group lines have
+        // already been resolved inside `renderUserToolResult` via
+        // `setLinePending`; this loop also covers (a) lines from a
+        // closed group whose results arrived late, and (b) edit-diff
+        // cards (Edit/Write), which still use the card chrome.
         if (Array.isArray(event.message.content)) {
           const ids = new Set<string>();
           for (const block of event.message.content) {
@@ -1043,16 +1104,11 @@ export class ClaudeWebviewView extends ItemView {
             if (typeof id === "string" && id.length > 0) ids.add(id);
           }
           if (ids.size > 0) {
-            // Both assistant-tool-use cards (Bash/Read/Glob/etc.) and
-            // edit-diff cards (Edit/Write) share the data-tool-use-id
-            // attribute, so resolve pending state on either type.
-            const tuCards = cards.getElementsByClassName(
-              "claude-wv-card--assistant-tool-use",
-            );
+            const tuLines = cards.getElementsByClassName("claude-wv-tool-line");
             const edCards = cards.getElementsByClassName(
               "claude-wv-card--edit-diff",
             );
-            for (const list of [tuCards, edCards]) {
+            for (const list of [tuLines, edCards]) {
               for (let i = 0; i < list.length; i++) {
                 const c = list[i];
                 const id = c?.getAttribute("data-tool-use-id");
@@ -1064,7 +1120,11 @@ export class ClaudeWebviewView extends ItemView {
           }
         }
         return;
+      }
       case "result":
+        // End-of-turn → close any active activity group so the next
+        // assistant turn starts with a fresh container.
+        closeActivityGroup(states.activityGroup);
         renderResult(states.result, cards, event, doc);
         clearSystemStatus(states.systemStatus);
         if (this.statusBar) {
