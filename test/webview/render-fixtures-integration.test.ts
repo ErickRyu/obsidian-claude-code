@@ -17,6 +17,7 @@ import {
   createUserToolResultState,
   renderUserToolResult,
 } from "../../src/webview/renderers/user-tool-result";
+import { createActivityGroupState } from "../../src/webview/renderers/activity-group";
 import {
   createResultState,
   renderResult,
@@ -115,10 +116,14 @@ describe("fixture integration — MH-04 tool_result + MH-05 result", () => {
 
     const { doc, parent } = makeDoc();
     const state = createUserToolResultState();
+    const groupState = createActivityGroupState();
     for (const ue of userEvents) {
-      renderUserToolResult(state, parent, ue, doc);
+      renderUserToolResult(state, groupState, parent, ue, doc);
     }
 
+    // No matching tool-line in this isolated render — all results render
+    // as fallback cards, so the count still matches the fixture's
+    // tool_result block count.
     const cards = parent.querySelectorAll(".claude-wv-card--user-tool-result");
     expect(cards.length).toBe(expectedToolUseIds.length);
 
@@ -155,15 +160,17 @@ describe("fixture integration — MH-04 tool_result + MH-05 result", () => {
     // exactly as many as there are tool_result blocks in its user events.
     const { doc: dH, parent: pH } = makeDoc();
     const stateH = createUserToolResultState();
+    const gH = createActivityGroupState();
     for (const ev of helloReplay.events.filter(isUser)) {
-      renderUserToolResult(stateH, pH, ev, dH);
+      renderUserToolResult(stateH, gH, pH, ev, dH);
     }
     expect(pH.querySelectorAll(".claude-wv-card--user-tool-result").length).toBe(0);
 
     const { doc: dE, parent: pE } = makeDoc();
     const stateE = createUserToolResultState();
+    const gE = createActivityGroupState();
     for (const ev of editReplay.events.filter(isUser)) {
-      renderUserToolResult(stateE, pE, ev, dE);
+      renderUserToolResult(stateE, gE, pE, ev, dE);
     }
     expect(pE.querySelectorAll(".claude-wv-card--user-tool-result").length).toBe(
       editToolResults,
@@ -187,8 +194,9 @@ describe("fixture integration — MH-04 tool_result + MH-05 result", () => {
 
     const { doc, parent } = makeDoc();
     const state = createUserToolResultState();
+    const groupState = createActivityGroupState();
     for (const ue of userEvents) {
-      renderUserToolResult(state, parent, ue, doc);
+      renderUserToolResult(state, groupState, parent, ue, doc);
     }
 
     const cards = parent.querySelectorAll(".claude-wv-card--user-tool-result");

@@ -70,6 +70,7 @@ import {
   createUserToolResultState,
   renderUserToolResult,
 } from "../../src/webview/renderers/user-tool-result";
+import { createActivityGroupState } from "../../src/webview/renderers/activity-group";
 import { wireWebview, type WebviewPluginHost } from "../../src/webview";
 import { VIEW_TYPE_CLAUDE_WEBVIEW, COMMAND_OPEN_WEBVIEW } from "../../src/constants";
 import type {
@@ -332,10 +333,13 @@ describe("Sub-AC 3 of AC 1 — MH-07/MH-08/MH-09 readiness + error/stderr + uiMo
     it("plan-mode.jsonl → user.tool_result with is_error=true lands as data-is-error='true' on the correlated card", () => {
       const { doc, parent } = makeDoc();
       const state = createUserToolResultState();
+      const groupState = createActivityGroupState();
       const r = replayFixture(path.join(FIXTURE_DIR, "plan-mode.jsonl"));
       for (const ue of r.events.filter(isUser)) {
-        renderUserToolResult(state, parent, ue, doc);
+        renderUserToolResult(state, groupState, parent, ue, doc);
       }
+      // No matching tool-line in this isolated render — error result lands
+      // as a fallback card carrying data-is-error.
       const errCards = parent.querySelectorAll(
         '.claude-wv-card--user-tool-result[data-is-error="true"]',
       );
@@ -344,9 +348,10 @@ describe("Sub-AC 3 of AC 1 — MH-07/MH-08/MH-09 readiness + error/stderr + uiMo
       // Differential: hello.jsonl renders 0 error tool_result cards.
       const { doc: dH, parent: pH } = makeDoc();
       const stateH = createUserToolResultState();
+      const groupStateH = createActivityGroupState();
       const rH = replayFixture(path.join(FIXTURE_DIR, "hello.jsonl"));
       for (const ue of rH.events.filter(isUser)) {
-        renderUserToolResult(stateH, pH, ue, dH);
+        renderUserToolResult(stateH, groupStateH, pH, ue, dH);
       }
       const helloErrCards = pH.querySelectorAll(
         '.claude-wv-card--user-tool-result[data-is-error="true"]',

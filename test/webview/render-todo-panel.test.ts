@@ -238,21 +238,26 @@ describe("render-todo-panel (SH-03, 4b-4 / 4b-5)", () => {
     const { createAssistantToolUseState, renderAssistantToolUse } = await import(
       "../../src/webview/renderers/assistant-tool-use"
     );
+    const { createActivityGroupState } = await import(
+      "../../src/webview/renderers/activity-group"
+    );
     const todoState = createTodoPanelState();
     const toolUseState = createAssistantToolUseState();
+    const groupState = createActivityGroupState();
     const ev = todoEvent("msg_excl", "toolu_exclusive", [
       { content: "Task A", status: "pending", activeForm: "A-ing" },
     ]);
 
-    renderAssistantToolUse(toolUseState, cardsEl, ev, doc);
+    renderAssistantToolUse(toolUseState, groupState, cardsEl, ev, doc);
     renderTodoPanel(todoState, cardsEl, sideEl, ev, doc);
 
-    // The generic tool_use card must NOT appear for TodoWrite — that's the
-    // whole point of the filter in assistant-tool-use.ts. If a regression
-    // removes the filter, this assertion fails before the Phase 2 card-
-    // kinds suite would notice.
+    // TodoWrite must not produce a tool-line nor open an activity-group.
+    // Only the dedicated todo-summary card may carry the matching id.
     expect(
-      cardsEl.querySelectorAll(".claude-wv-card--assistant-tool-use").length,
+      cardsEl.querySelectorAll(".claude-wv-tool-line").length,
+    ).toBe(0);
+    expect(
+      cardsEl.querySelectorAll(".claude-wv-card--activity-group").length,
     ).toBe(0);
     expect(
       cardsEl.querySelectorAll(".claude-wv-card--todo-summary").length,

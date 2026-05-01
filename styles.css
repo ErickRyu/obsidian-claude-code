@@ -310,24 +310,21 @@
   margin-bottom: 4px;
 }
 
-.claude-wv-card--assistant-tool-use {
+/* 2026-05-01 dogfood pass 2: Activity Group container — hosts a
+   collapsed list of one-line tool calls. The header alone is the
+   default visual; clicking expands the body. Errors do NOT auto-open;
+   a red chip in the header surfaces them instead. */
+.claude-wv-card--activity-group {
   border-left: 3px solid var(--text-accent);
+  padding: 8px 12px;
   position: relative;
 }
 
-/* Pulsing dot in the top-right corner while a tool is running.
-   Cleared via `data-pending="false"` when the matching user.tool_result
-   card lands. (2026-04-29 dogfood Issue #2 — tool-pending visibility.) */
-.claude-wv-card--assistant-tool-use[data-pending="true"]::after {
-  content: "";
-  position: absolute;
-  top: 10px;
-  right: 12px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-accent);
-  animation: claude-wv-pending-pulse 1.2s ease-in-out infinite;
+/* Header background brightens slightly on hover so users notice it is
+   clickable. Inactive header is muted to avoid competing with the
+   conversation flow. */
+.claude-wv-card--activity-group:hover {
+  background: rgba(var(--background-modifier-border-rgb, 0,0,0), 0.04);
 }
 
 @keyframes claude-wv-pending-pulse {
@@ -587,17 +584,125 @@
   font-weight: 600;
 }
 
-/* --- Tool use --- */
-.claude-wv-tool-use-header {
-  font-weight: 600;
+/* --- Activity Group (2026-05-01 dogfood pass 2) --- */
+/* Header is the *default visual* — collapsed group shows only this row.
+   Bumped to ui-small + normal text color + bold label so it does not
+   read as muted noise. Hover hints clickability. */
+.claude-wv-activity-group-details > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  padding: 2px 0;
+}
+
+.claude-wv-activity-group-details > summary:hover {
   color: var(--text-accent);
 }
 
-/* 2026-05-01 dogfood: collapsed-by-default tool_use card. Summary mirrors
-   the existing `.claude-wv-result-details` chevron treatment so the whole
-   card area reads consistently. */
-.claude-wv-tool-use-details > summary {
+.claude-wv-activity-group-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.claude-wv-activity-group-details > summary::before {
+  content: "▸ ";
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.claude-wv-activity-group-details[open] > summary::before {
+  content: "▾ ";
+}
+
+.claude-wv-activity-group-label {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.claude-wv-activity-group-sep {
+  color: var(--text-faint);
+}
+
+.claude-wv-activity-group-count {
+  font-family: var(--font-monospace);
+  color: var(--text-muted);
+}
+
+/* Red chip in the header surfaces error count without auto-opening
+   the group. Stands out against the muted body so it draws attention
+   even in a long thread. */
+.claude-wv-activity-group-error-chip {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-monospace);
+  color: var(--text-error);
+  background: rgba(var(--background-modifier-error-rgb, 220, 50, 50), 0.15);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.claude-wv-activity-group-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--text-accent);
+  animation: claude-wv-pending-pulse 1.2s ease-in-out infinite;
+}
+
+/* Body separator: thin top border once the group is open, plus a hint
+   of indent so the lines visually nest under the header. */
+.claude-wv-activity-group-details[open] > .claude-wv-activity-group-body {
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 6px;
+  margin-top: 4px;
+}
+
+.claude-wv-activity-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* --- Tool line (one tool round-trip = one line) --- */
+/* No left stripe in any state — the status chip on the right carries
+   success/error visually. Removing the stripe is what gives the line
+   its "log row" character vs. "stacked card" character. */
+.claude-wv-tool-line {
+  position: relative;
+  padding: 1px 4px;
+}
+
+.claude-wv-tool-line:hover {
+  background: rgba(var(--background-modifier-border-rgb, 0,0,0), 0.06);
+  border-radius: 3px;
+}
+
+/* Pulsing dot at the end of the summary while running. */
+.claude-wv-tool-line[data-pending="true"] .claude-wv-tool-line-status::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-accent);
+  animation: claude-wv-pending-pulse 1.2s ease-in-out infinite;
+  vertical-align: middle;
+}
+
+.claude-wv-tool-line-details > summary {
   cursor: pointer;
   list-style: none;
   user-select: none;
@@ -607,33 +712,70 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  line-height: 1.6;
 }
 
-.claude-wv-tool-use-details > summary::-webkit-details-marker {
+.claude-wv-tool-line-details > summary::-webkit-details-marker {
   display: none;
 }
 
-.claude-wv-tool-use-details > summary::before {
+.claude-wv-tool-line-details > summary::before {
   content: "▸ ";
   color: var(--text-muted);
   flex-shrink: 0;
 }
 
-.claude-wv-tool-use-details[open] > summary::before {
+.claude-wv-tool-line-details[open] > summary::before {
   content: "▾ ";
 }
 
-.claude-wv-tool-use-details[open] > summary {
-  margin-bottom: 4px;
+.claude-wv-tool-line-name {
+  color: var(--text-accent);
+  font-weight: 600;
 }
 
-.claude-wv-tool-use-summary-sep,
-.claude-wv-tool-use-summary-hint {
+.claude-wv-tool-line-sep {
+  color: var(--text-faint);
+}
+
+.claude-wv-tool-line-hint {
   color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-  font-family: var(--font-monospace);
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Status chip on the right of the summary. ✗ becomes a red pill so
+   errors are unmistakable even without a left stripe. ✓ stays subtle. */
+.claude-wv-tool-line-status {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-weight: 700;
+  min-width: 12px;
+  text-align: right;
+  font-family: var(--font-monospace);
+}
+
+.claude-wv-tool-line-status--ok {
+  color: var(--background-modifier-success);
+  font-weight: 500;
+}
+
+.claude-wv-tool-line-status--error {
+  color: var(--text-error);
+  background: rgba(var(--background-modifier-error-rgb, 220, 50, 50), 0.15);
+  padding: 0 5px;
+  border-radius: 3px;
+}
+
+/* Visual divider between input preview and result body when expanded. */
+.claude-wv-tool-line-sep-line {
+  height: 1px;
+  background: var(--background-modifier-border);
+  margin: 4px 0;
 }
 
 .claude-wv-tool-use-input {

@@ -2,6 +2,43 @@
 
 All notable changes to obsidian-claude-code will be documented in this file.
 
+## [0.6.3] - 2026-05-01
+
+Tool-call density fix. A turn that fans out 6 tool calls used to fill the side panel — each `assistant.tool_use` and matching `user.tool_result` rendered as its own ~32px card, so a single agent loop pushed conversation context off-screen. v0.6.3 collapses consecutive generic tool calls into a single `Activity` group card whose body is closed by default. The user still gets one visible row per turn, the tool detail is one click away, and errors stay loud via a red chip in the header instead of a stripe per line.
+
+### Added
+- **Activity Group container card.** Consecutive generic tool calls (Read / Bash / Grep / Glob / WebFetch / Task / SlashCommand / etc.) inside one assistant turn now render inside a single `.claude-wv-card--activity-group` container. Header reads `Activity · N tools`. Closed by default — clicking the chevron expands the body.
+- **Per-tool one-line entry.** Inside the group, each tool round-trip is a single `.claude-wv-tool-line` row with monospace 11px text. Format: `▸ Read · src/webview/view.ts ✓`. Click expands an inline `<details>` showing the input JSON preview and the result body. The matching `tool_result` no longer renders a separate card — it attaches into the same line, so one round-trip = one visual unit.
+- **Header error chip.** Group header surfaces `2 ERRORS` as an uppercase red pill when any line in the group failed. Visible while the group is collapsed, so the user sees failure count without expanding. Disappears when no errors remain.
+- **Status chip per line.** ✓ (subtle green) for success, ✗ (red pill) for error. Pulsing dot while still pending.
+- **Orphan result fallback.** When a `tool_result` arrives after the group has closed (e.g. interleaved assistant text ended the burst), the result still renders as a standalone `.claude-wv-card--user-tool-result` card so data is never lost.
+
+### Changed
+- **`renderAssistantToolUse` and `renderUserToolResult` signatures** now take an `ActivityGroupRenderState` argument. Tests and integration paths updated to construct one with `createActivityGroupState()`. Internal API only — opt-in webview users see no compatibility break.
+- **Group lifecycle is dispatcher-managed.** `view.ts` closes the active group when assistant emits a non-empty text block, when an Edit/Write/TodoWrite tool fires (those have dedicated diff and panel renderers), when the user sends a plain-text turn, or when a `result` event ends the conversation. Pure tool_use/tool_result events keep the group open.
+- **Pre-existing `claude-wv-card--assistant-tool-use` card class is retired.** The grouped tool line uses `claude-wv-tool-line` instead. CSS/test selectors updated accordingly. Edit/Write diff cards and TodoWrite summary card keep their old class names — they live outside the group on purpose (the diff and panel are content the user wants to see, not log noise).
+- **Errors no longer auto-open the group container.** Earlier draft auto-opened the `<details>` on the first error, which defeated the compaction goal — one bad line and the whole group expanded. Now the header chip carries the signal; the line's own `<details>` still auto-opens so the failure body is immediately visible the moment the user expands the group.
+
+### Fixed
+- **Tool-call noise overflowing the conversation.** A 6-tool turn was ~360px of stacked cards. After v0.6.3 the same turn collapses to a ~32px `Activity · 6 tools` header. Expanded view shows ~150px of compact log lines instead.
+
+### Internal
+- **New module `src/webview/renderers/activity-group.ts`** (~250 LOC). Owns `ActivityGroupRenderState`, the container element lifecycle, the per-line bookkeeping (count, pending tally, error tally), and the header refresh logic.
+- **`assistant-tool-use.ts` rewritten** to emit `<div class="claude-wv-tool-line">` rather than `<div class="claude-wv-card claude-wv-card--assistant-tool-use">`. Same `data-tool-use-id` / `data-tool-name` / `data-pending` attributes preserved so view.ts pending-resolution and the existing CSS pulsing-dot animation keep working with minimal selector changes.
+- **`user-tool-result.ts` rewritten** to look up the matching tool line via `findToolLine(groupState, tool_use_id)` and update its body in place. Falls back to the old standalone-card path when no matching line exists.
+- **`view.ts` dispatcher** gained the activity-group state in `RendererStates`, plus four close-group trigger checks (assistant text/Edit/Write/TodoWrite, user plain-text, result event).
+- **CSS** adds `.claude-wv-card--activity-group`, `.claude-wv-activity-group-{details,header,label,sep,count,error-chip,dot,body}`, `.claude-wv-tool-line`, `.claude-wv-tool-line-{details,summary,name,sep,hint,status,sep-line}`. Reuses the existing `claude-wv-pending-pulse` keyframe for the dot animation. Old `.claude-wv-card--assistant-tool-use` styles deleted.
+
+### Verified
+- 721 vitest pass (12 pre-existing artifact-gate failures unchanged: `completion-gate.test.ts`, `sub-ac-4-ac-1-mh-10-mh-11-smoke.test.ts`).
+- 10 new test cases in `test/webview/render-activity-group.test.ts` covering container creation, idempotent ensure/register, close/reopen, header count refresh, error chip rendering, pending state transitions, orphan-line tolerance.
+- Existing `render-tool-use-basic`, `render-user-tool-result`, `render-permission-plan-mode`, `card-kinds-per-fixture`, `render-fixtures-integration`, `render-todo-panel`, `mh-07-08-09-readiness` updated to the new line-mode + group-container shape. Card-kind expectations recomputed against real fixture replay.
+- `npm run build` clean.
+- Manually dogfooded in Obsidian: 6-tool agent loop renders as `Activity · 6 tools`, expands to log-style lines, error line shows red ✗ pill, Edit/Write diff cards remain visible outside the group, TodoWrite strip unaffected.
+
+### Migration notes
+None for end users — opt-in webview, internal renderer change, no settings or stored data touched. Test authors who write integration tests against `assistant-tool-use` need to (1) construct an `ActivityGroupRenderState` and pass it as the second argument to `renderAssistantToolUse` / `renderUserToolResult`, (2) query the group container via `.claude-wv-card--activity-group`, and (3) query individual tool calls via `.claude-wv-tool-line` (not `.claude-wv-card--assistant-tool-use`).
+
 ## [0.6.2] - 2026-05-01
 
 Webview input UX overhaul. Three phases (Enter-to-send, `@` file picker, `/` slash menu) shipped behind a unified inline popover, plus filesystem-based command discovery so the slash menu is populated the moment the view opens — no more "type something first to see your commands". The `@@<path>` duplication bug from the first pass is fixed via a fundamental architecture change: triggers now fire on the textarea's `input` event, not `keydown`, so there's no race with the modal's focus shift.
