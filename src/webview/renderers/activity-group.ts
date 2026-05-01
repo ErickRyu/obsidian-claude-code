@@ -108,8 +108,19 @@ export function ensureActivityGroup(
  * Mark the active group as ended. Subsequent `ensureActivityGroup`
  * calls will create a brand-new group element. The old group's DOM is
  * left in place so the conversation history stays intact.
+ *
+ * Before clearing state, force the group container's `data-pending`
+ * attribute to `"false"`. Without this, a group that closes while a
+ * tool is still in flight (e.g. assistant text arrives between
+ * tool_use and tool_result) leaves a dangling pulsing dot on the
+ * header. The dispatcher's later `data-pending="false"` sweep updates
+ * tool-line elements but not the group container, so this is the only
+ * place that catches it.
  */
 export function closeActivityGroup(state: ActivityGroupRenderState): void {
+  if (state.current !== null) {
+    state.current.group.setAttribute("data-pending", "false");
+  }
   state.current = null;
   state.toolLines = new Map();
   state.toolCount = 0;

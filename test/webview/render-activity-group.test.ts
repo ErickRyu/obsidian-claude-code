@@ -216,4 +216,26 @@ describe("activity-group lifecycle", () => {
     const body = group.querySelector(".claude-wv-activity-group-body");
     expect(body?.children.length ?? 0).toBe(0);
   });
+
+  it("closeActivityGroup forces data-pending=false on the group element so the pulsing dot stops", () => {
+    // 2026-05-01 dogfood pass 3: a group that closes while a tool is still
+    // pending (assistant text arrives between tool_use and tool_result)
+    // used to leave a dangling pulsing dot on the header. The dispatcher's
+    // later `data-pending="false"` sweep only touches tool-line elements,
+    // so closeActivityGroup is the only place that catches the group.
+    const { doc, parent } = setupDom();
+    const state = createActivityGroupState();
+    ensureActivityGroup(state, parent as unknown as HTMLElement, doc as unknown as Document);
+
+    const lineA = makeLine(doc as unknown as Document, "toolu_a", "Read");
+    registerToolUseLine(state, "toolu_a", lineA);
+    const group = parent.children[0] as HTMLElement;
+    // Group is currently pending because lineA's data-pending="true"
+    expect(group.getAttribute("data-pending")).toBe("true");
+
+    closeActivityGroup(state);
+    // Even though setLinePending(false) was never called, the group's
+    // pending attribute must be cleared so the header dot stops pulsing.
+    expect(group.getAttribute("data-pending")).toBe("false");
+  });
 });

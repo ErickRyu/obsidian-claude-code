@@ -21,7 +21,9 @@ import {
  *     (`<pre class="claude-wv-tool-result-body">` for text content, plus
  *     a `<div class="claude-wv-tool-result-image">` placeholder for image
  *     blocks) into the line's collapsed `<details>`. Errors auto-open
- *     the line's `<details>` and the group container `<details>`.
+ *     the line's `<details>` only — the group container stays collapsed
+ *     so the compaction goal isn't defeated by a single failure. The
+ *     header surfaces the failure via the `N error(s)` chip.
  *   - If no matching line exists (orphan result, e.g. result arrives
  *     after the activity group has been closed by an interleaved assistant
  *     text), fall back to creating a standalone `claude-wv-card--user-tool-result`
