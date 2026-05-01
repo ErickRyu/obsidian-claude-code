@@ -530,6 +530,18 @@ export class ClaudeWebviewView extends ItemView {
       // Phase 3 slash menu — capture CLI slash commands from system.init.
       if (
         e.event.type === "system" &&
+        e.event.subtype === "init"
+      ) {
+        // eslint-disable-next-line no-console
+        console.log("[claude-webview] system.init event:", e.event);
+        // eslint-disable-next-line no-console
+        console.log(
+          "[claude-webview] system.init.slash_commands:",
+          (e.event as { slash_commands?: unknown }).slash_commands,
+        );
+      }
+      if (
+        e.event.type === "system" &&
         e.event.subtype === "init" &&
         Array.isArray(e.event.slash_commands)
       ) {
