@@ -28,6 +28,15 @@ export interface InputBarOptions {
    * `target.addEventListener` and are explicitly removed on `dispose()`.
    */
   readonly registerDomEvent?: DomEventRegistrar;
+  /**
+   * Phase 3 — slash command menu trigger.
+   * Called on every keydown event BEFORE the Enter handling logic.
+   * When it returns `true`, the event has been fully handled by the caller
+   * (modal opened, preventDefault called) — the input-bar keydown handler
+   * short-circuits and does nothing further.
+   * When it returns `false` (or is absent), the normal Enter logic runs.
+   */
+  readonly onSlashTrigger?: (e: KeyboardEvent) => boolean;
 }
 
 /** Narrowed `registerDomEvent` signature — mirrors Obsidian's overload. */
@@ -117,6 +126,7 @@ export function buildInputBar(
   });
 
   register(textareaEl, "keydown", (e) => {
+    if (options.onSlashTrigger?.(e) === true) return;
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       submit();

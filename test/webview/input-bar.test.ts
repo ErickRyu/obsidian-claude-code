@@ -152,6 +152,29 @@ describe("buildInputBar — Phase 3 input bar runtime (3-8)", () => {
     bar.dispose();
   });
 
+  it("onSlashTrigger short-circuits before Enter handling", () => {
+    const { root } = mountRoot();
+    const bus = createBus();
+    const seen: string[] = [];
+    bus.on("ui.send", (e) => seen.push(e.text));
+
+    // A fake onSlashTrigger that claims to have intercepted
+    const onSlashTrigger = vi.fn(() => true);
+
+    const bar = buildInputBar(root, bus, { onSlashTrigger });
+    bar.textareaEl.value = "should not send";
+
+    // Dispatch an Enter keydown — onSlashTrigger returns true, so Enter should be short-circuited.
+    keydown(bar.textareaEl, { key: "Enter", metaKey: true });
+
+    // The onSlashTrigger was called
+    expect(onSlashTrigger).toHaveBeenCalled();
+    // No ui.send emitted because the trigger intercepted the event
+    expect(seen).toHaveLength(0);
+
+    bar.dispose();
+  });
+
   it("dispose removes listeners so post-dispose click is a no-op", () => {
     const { root } = mountRoot();
     const bus = createBus();
