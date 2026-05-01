@@ -34,29 +34,60 @@ export function shouldTriggerAt(
 /**
  * Intercepts the `@` key when the trigger condition is met.
  *
- * Calls `deps.openModal` with two callbacks:
- *   - `onSelect(path)`: inserts `@<path> ` at the cursor position.
- *   - `onDismiss()`:    inserts literal `@` at the cursor position
- *                       (mirrors the legacy terminal behavior).
+ * Note: this does NOT call `preventDefault()`. We let the `@` flow into the
+ * textarea (so the user sees what they typed) and capture its position.
+ * On select, `replaceAtToken` swaps the `@` (and any query the user typed
+ * after) with `@<path> `. On dismiss, the typed `@` simply stays in place.
  *
- * Returns `true` when it intercepts the event (caller should return early).
- * Returns `false` when the event was not intercepted.
+ * Returns `true` when it intercepts the event (caller should return early
+ * so downstream handlers like Enter-to-send don't also fire).
  */
 export function handleAtKey(deps: AtMentionDeps, e: KeyboardEvent): boolean {
   if (!shouldTriggerAt(deps.textarea, e)) return false;
 
-  e.preventDefault();
+  // Capture the cursor position at keydown time — this is the offset where
+  // the browser is about to insert `@`. After the default key action runs,
+  // `selectionStart` will be `atPos + 1`. We don't preventDefault so the
+  // user sees their `@` immediately.
+  const atPos = deps.textarea.selectionStart ?? 0;
 
   deps.openModal(
     (path: string) => {
-      insertAtCursor(deps.textarea, `@${path} `);
+      replaceAtToken(deps.textarea, atPos, `@${path} `);
     },
     () => {
-      insertAtCursor(deps.textarea, "@");
-    }
+      // Modal dismissed — the `@` already lives in the textarea, leave it
+      // alone so the user can keep typing or delete it manually.
+    },
   );
 
   return true;
+}
+
+/**
+ * Replaces the `@` token (from `atPos` up to the current cursor position)
+ * with `replacement`. Used after the file picker resolves so the typed
+ * `@` (and any query characters that landed before the modal stole focus)
+ * become `@<path> `. Cursor lands at end of the replacement.
+ */
+export function replaceAtToken(
+  textarea: HTMLTextAreaElement,
+  atPos: number,
+  replacement: string,
+): void {
+  const cursorPos = textarea.selectionStart ?? atPos + 1;
+  const before = textarea.value.slice(0, atPos);
+  const after = textarea.value.slice(cursorPos);
+  textarea.value = before + replacement + after;
+
+  const newPos = atPos + replacement.length;
+  textarea.selectionStart = newPos;
+  textarea.selectionEnd = newPos;
+
+  const EventCtor: typeof Event =
+    (textarea.ownerDocument?.defaultView as unknown as { Event: typeof Event } | null)
+      ?.Event ?? Event;
+  textarea.dispatchEvent(new EventCtor("input", { bubbles: true }));
 }
 
 /**

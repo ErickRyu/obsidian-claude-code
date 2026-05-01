@@ -190,7 +190,7 @@ describe("handleAtKey", () => {
     expect(openModal).toHaveBeenCalledOnce();
   });
 
-  it("@ at empty textarea → preventDefault called on the event", () => {
+  it("@ at empty textarea → does NOT preventDefault (lets @ flow into textarea)", () => {
     const win = makeWindow();
     const ta = makeTextarea(win, "");
     ta.selectionStart = 0;
@@ -203,7 +203,10 @@ describe("handleAtKey", () => {
 
     handleAtKey(deps, e);
 
-    expect(preventDefaultSpy).toHaveBeenCalledOnce();
+    // The @ must reach the textarea so the user sees what they typed; the
+    // duplication bug came from preventDefault NOT being honored in
+    // Obsidian/Electron and then `insertAtCursor` prepending another @.
+    expect(preventDefaultSpy).not.toHaveBeenCalled();
   });
 
   // ─── Case 2: @ after space → triggers ───────────────────────────────────────
@@ -299,10 +302,12 @@ describe("handleAtKey", () => {
     expect(openModal).not.toHaveBeenCalled();
   });
 
-  // ─── Case 7: Esc dismiss → "@" inserted at cursor ───────────────────────────
+  // ─── Case 7: Esc dismiss → no-op (typed @ stays where the browser put it) ───
 
-  it("Esc dismiss callback → '@' inserted at cursor position", () => {
+  it("Esc dismiss callback → no-op (the @ already in the textarea is preserved)", () => {
     const win = makeWindow();
+    // handleAtKey is dispatched at keydown — before the @ lands. Pre-insert
+    // state: empty textarea, cursor at 0.
     const ta = makeTextarea(win, "");
     ta.selectionStart = 0;
     ta.selectionEnd = 0;
@@ -317,26 +322,45 @@ describe("handleAtKey", () => {
     handleAtKey(deps, e);
     expect(capturedOnDismiss).not.toBeNull();
 
+    // Browser default action inserts @ between keydown and modal opening.
+    // (happy-dom doesn't simulate this, so we mirror it manually.)
+    ta.value = "@";
+    ta.selectionStart = 1;
+    ta.selectionEnd = 1;
+
     capturedOnDismiss!();
+    // Dismiss must not mutate the textarea — the @ the user typed remains.
     expect(ta.value).toBe("@");
   });
 
-  it("Esc dismiss callback → '@' inserted mid-text at cursor", () => {
+  it("Esc dismiss callback → no-op when @ is mid-text", () => {
     const win = makeWindow();
-    const ta = makeTextarea(win, "hello ");
-    ta.selectionStart = 6;
-    ta.selectionEnd = 6;
+    // Mirror production: browser already inserted @ after "hello ".
+    const ta = makeTextarea(win, "hello @");
+    ta.selectionStart = 7;
+    ta.selectionEnd = 7;
 
     let capturedOnDismiss: (() => void) | null = null;
     const openModal = vi.fn((onSelect, onDismiss) => {
       capturedOnDismiss = onDismiss;
     });
     const deps = makeAtDeps(ta, openModal);
+    // handleAtKey is dispatched at keydown, BEFORE the @ lands. Recreate
+    // that ordering by setting up the textarea pre-insertion just for the
+    // call to handleAtKey, then putting back the post-insertion state for
+    // the dismiss callback.
+    ta.value = "hello ";
+    ta.selectionStart = 6;
+    ta.selectionEnd = 6;
     const e = makeKeyEvent(win, { key: "@" });
-
     handleAtKey(deps, e);
-    capturedOnDismiss!();
 
+    // Browser inserts @ between handleAtKey and the modal opening.
+    ta.value = "hello @";
+    ta.selectionStart = 7;
+    ta.selectionEnd = 7;
+
+    capturedOnDismiss!();
     expect(ta.value).toBe("hello @");
   });
 
