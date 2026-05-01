@@ -4,8 +4,10 @@
  * Assembles the message-composition UI into the `inputRowEl` slot:
  *   - `<textarea>` with aria-label, auto-resize on input, 2-row default.
  *   - `<button>` Send with aria-label.
- *   - Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) → submit.
- *   - Plain Enter inserts a newline (unchanged default browser behavior).
+ *   - Plain Enter → submit (chat-app standard).
+ *   - Shift+Enter → newline (browser default, falls through).
+ *   - Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) → also submit (backwards-compat).
+ *   - Enter during IME composition → fall through (do not submit mid-composition).
  *
  * On submit: emit `{kind:'ui.send', text}` with the trimmed value, then
  * clear the textarea.  Empty / whitespace-only text is a no-op.
@@ -117,10 +119,11 @@ export function buildInputBar(
   });
 
   register(textareaEl, "keydown", (e) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      submit();
-    }
+    if (e.isComposing) return;
+    if (e.key !== "Enter") return;
+    if (e.shiftKey) return;
+    e.preventDefault();
+    submit();
   });
 
   register(textareaEl, "input", () => {
