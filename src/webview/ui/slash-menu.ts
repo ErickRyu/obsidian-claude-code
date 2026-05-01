@@ -202,11 +202,20 @@ export async function listGlobalSlashCommands(
     console.warn("[claude-webview] listGlobalSlashCommands: no HOME env");
     return [];
   }
+  // Use require() rather than dynamic import: the plugin bundle is CJS,
+  // and Obsidian's Electron renderer can resolve `fs/promises` via the
+  // CommonJS loader but NOT via ESM dynamic import (which would require
+  // `node:` prefix and an experimental flag). esbuild leaves this require
+  // call alone because we marked node-pty / electron / obsidian as
+  // external — bare module specifiers are still bundled, but Node
+  // builtins resolve through the runtime require regardless.
   let fsP: typeof import("node:fs/promises");
   let pathMod: typeof import("node:path");
   try {
-    fsP = await import("node:fs/promises");
-    pathMod = await import("node:path");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    fsP = (globalThis as unknown as { require: NodeRequire }).require("fs/promises");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    pathMod = (globalThis as unknown as { require: NodeRequire }).require("path");
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("[claude-webview] listGlobalSlashCommands: node module load failed:", err);
