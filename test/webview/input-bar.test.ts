@@ -198,7 +198,7 @@ describe("buildInputBar — Phase 3 input bar runtime (3-8)", () => {
     const bar = buildInputBar(root, bus, {
       onAtTrigger: (e) => {
         recordedEvents.push(e);
-        // Intercept Enter; pass through Cmd+Enter
+        // Intercept plain Enter; pass through Cmd+Enter
         return e.key === "Enter" && !e.metaKey && !e.ctrlKey;
       },
     });
@@ -216,6 +216,26 @@ describe("buildInputBar — Phase 3 input bar runtime (3-8)", () => {
 
     bar.dispose();
     void win;
+  });
+
+  it("onSlashTrigger short-circuits before Enter handling", () => {
+    const { root } = mountRoot();
+    const bus = createBus();
+    const seen: string[] = [];
+    bus.on("ui.send", (e) => seen.push(e.text));
+
+    const onSlashTrigger = vi.fn(() => true);
+
+    const bar = buildInputBar(root, bus, { onSlashTrigger });
+    bar.textareaEl.value = "should not send";
+
+    // onSlashTrigger returns true → Enter is short-circuited.
+    keydown(bar.textareaEl, { key: "Enter", metaKey: true });
+
+    expect(onSlashTrigger).toHaveBeenCalled();
+    expect(seen).toHaveLength(0);
+
+    bar.dispose();
   });
 
   it("dispose removes listeners so post-dispose click is a no-op", () => {

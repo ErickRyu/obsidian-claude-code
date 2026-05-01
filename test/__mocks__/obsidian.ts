@@ -32,7 +32,21 @@ export class WorkspaceLeaf {
 }
 
 export class App {
-  vault: any = { getName: () => "test-vault" };
+  vault: any = {
+    getName: () => "test-vault",
+    // Minimal event emitter for vault events (create/delete/rename).
+    // Returns a no-op event reference that ItemView.registerEvent can accept.
+    on: vi.fn((_event: string, _handler: (...args: any[]) => void) => ({
+      // EventRef-like object — the real Obsidian returns an EventRef
+      // that Component.registerEvent stores for cleanup. The shim
+      // returns a plain object so the cleanup path has something to hold.
+    })),
+    adapter: {
+      exists: vi.fn(async () => false),
+      list: vi.fn(async () => ({ files: [] as string[], folders: [] as string[] })),
+      read: vi.fn(async () => ""),
+    },
+  };
   workspace: any = { openLinkText: vi.fn() };
   metadataCache: any = { getFirstLinkpathDest: vi.fn(() => null) };
 }

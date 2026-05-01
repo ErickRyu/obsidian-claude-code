@@ -6,6 +6,13 @@ import { createBus, type Bus } from "./event-bus";
 import { buildInputBar, type InputBar } from "./ui/input-bar";
 import { handleAtKey } from "./ui/at-mention-trigger";
 import {
+  handleSlashKey,
+  mergeSlashCommands,
+  SlashCommandModal,
+  type SlashCommand,
+  type SlashCommandSource,
+} from "./ui/slash-menu";
+import {
   SessionController,
   type SpawnImpl,
 } from "./session/session-controller";
@@ -242,6 +249,19 @@ export class ClaudeWebviewView extends ItemView {
   private inputBar: InputBar | null = null;
   private statusBar: StatusBarHandle | null = null;
   /**
+   * Phase 3 slash menu — CLI builtin command names captured from the
+   * `system.init` event's `slash_commands` field. Populated on first
+   * system.init; reset implicitly when the view closes (the class
+   * instance is recreated on each open).
+   */
+  private cliSlashCommands: string[] = [];
+  /**
+   * Phase 3 slash menu — user-defined commands from `.claude/commands/*.md`.
+   * Loaded lazily on first need; invalidated when vault files change.
+   * `null` means "not yet loaded".
+   */
+  private userSlashCache: SlashCommand[] | null = null;
+  /**
    * 2026-04-29 dogfood Issue #2 — stay pinned to the bottom of the cards
    * region while streaming, but yield to the user the moment they
    * scroll up to read history. Resets to `true` after the user scrolls
@@ -277,6 +297,69 @@ export class ClaudeWebviewView extends ItemView {
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 3 — slash menu helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Reads user-defined slash commands from `<vault>/.claude/commands/*.md`.
+   * Each file contributes one SlashCommand: name = filename without extension,
+   * description = first non-empty line of the file content.
+   * Silently returns [] on any error (vault not configured, path missing, etc.).
+   */
+  private async listUserSlashCommands(): Promise<SlashCommand[]> {
+    const adapter = this.app.vault.adapter;
+    try {
+      const exists = await adapter.exists(".claude/commands");
+      if (!exists) return [];
+    } catch {
+      return [];
+    }
+
+    let listing: { files: string[]; folders: string[] };
+    try {
+      listing = await adapter.list(".claude/commands");
+    } catch {
+      return [];
+    }
+
+    // Guard for both possible shapes (spec note about adapter.list)
+    const files: string[] = Array.isArray(listing?.files) ? listing.files : [];
+    const mdFiles = files.filter((f) => f.endsWith(".md"));
+
+    const results: SlashCommand[] = [];
+    for (const filePath of mdFiles) {
+      try {
+        const content = await adapter.read(filePath);
+        const firstNonEmpty = content
+          .split("\n")
+          .map((l) => l.trim())
+          .find((l) => l.length > 0);
+        const baseName = filePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+        if (baseName.length === 0) continue;
+        results.push({
+          name: baseName,
+          source: "user",
+          description: firstNonEmpty,
+        });
+      } catch {
+        // Skip unreadable files — continue silently.
+        // eslint-disable-next-line no-console
+        console.warn(`[claude-webview] Could not read slash command file: ${filePath}`);
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Ensures the user slash command cache is populated.
+   * Idempotent — no-op if already loaded.
+   */
+  private async ensureUserSlashCommands(): Promise<void> {
+    if (this.userSlashCache !== null) return;
+    this.userSlashCache = await this.listUserSlashCommands();
   }
 
   getViewType(): string {
@@ -422,9 +505,49 @@ export class ClaudeWebviewView extends ItemView {
       const layout = this.layout;
       const states = this.states;
       if (!layout || !states) return;
+      // Phase 3 slash menu — capture CLI slash commands from system.init.
+      if (
+        e.event.type === "system" &&
+        e.event.subtype === "init" &&
+        Array.isArray(e.event.slash_commands)
+      ) {
+        this.cliSlashCommands = e.event.slash_commands;
+        // Kick off user command cache load opportunistically so it's warm
+        // by the time the user presses "/".
+        this.ensureUserSlashCommands().catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.warn("[claude-webview] ensureUserSlashCommands failed:", err);
+        });
+      }
       this.dispatchStreamEvent(e.event, layout, states, doc);
       this.scrollToBottomIfPinned();
     });
+
+    // Phase 3 — invalidate user slash cache when .claude/commands/ changes.
+    // Guard vault.on — test harnesses may provide a minimal or absent app.
+    if (typeof this.app?.vault?.on === "function") {
+      this.registerEvent(
+        this.app.vault.on("create", (file: { path: string }) => {
+          if (file.path.startsWith(".claude/commands/")) {
+            this.userSlashCache = null;
+          }
+        })
+      );
+      this.registerEvent(
+        this.app.vault.on("delete", (file: { path: string }) => {
+          if (file.path.startsWith(".claude/commands/")) {
+            this.userSlashCache = null;
+          }
+        })
+      );
+      this.registerEvent(
+        this.app.vault.on("rename", (file: { path: string }) => {
+          if (file.path.startsWith(".claude/commands/")) {
+            this.userSlashCache = null;
+          }
+        })
+      );
+    }
 
     const runtime = this.runtime;
     if (runtime) {
@@ -610,7 +733,17 @@ export class ClaudeWebviewView extends ItemView {
       }
     }
 
+    const slashSource: SlashCommandSource = {
+      list: () => mergeSlashCommands(
+        this.cliSlashCommands,
+        this.userSlashCache ?? [],
+      ),
+    };
+
     this.inputBar = buildInputBar(this.layout.inputRowEl, bus, {
+      registerDomEvent: (el, type, handler) => {
+        this.registerDomEvent(el, type, handler);
+      },
       onAtTrigger: (e) => {
         const ta = this.inputBar?.textareaEl;
         if (!ta) return false;
@@ -621,7 +754,21 @@ export class ClaudeWebviewView extends ItemView {
               new FileSuggestModal(this.app, onSelect, onDismiss).open();
             },
           },
-          e
+          e,
+        );
+      },
+      onSlashTrigger: (e) => {
+        const ta = this.inputBar?.textareaEl;
+        if (!ta) return false;
+        return handleSlashKey(
+          {
+            textarea: ta,
+            source: slashSource,
+            openModal: (items, onSelect, onDismiss) => {
+              new SlashCommandModal(this.app, items, onSelect, onDismiss).open();
+            },
+          },
+          e,
         );
       },
     });

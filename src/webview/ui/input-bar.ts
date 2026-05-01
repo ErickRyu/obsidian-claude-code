@@ -31,12 +31,19 @@ export interface InputBarOptions {
    */
   readonly registerDomEvent?: DomEventRegistrar;
   /**
-   * Optional handler invoked at the very start of the keydown listener,
-   * before Enter handling. Return `true` to short-circuit further
-   * processing of the event. Return `false` (or `undefined`) to let
-   * the existing Enter logic run normally.
+   * Optional `@`-key handler invoked at the start of the keydown listener,
+   * before Enter handling. Return `true` to short-circuit further processing
+   * (the caller has opened the file picker modal and called preventDefault).
+   * Return `false` / `undefined` to let the normal Enter logic run.
    */
   readonly onAtTrigger?: (e: KeyboardEvent) => boolean;
+  /**
+   * Optional `/`-key handler invoked at the start of the keydown listener,
+   * before Enter handling. Return `true` to short-circuit further processing
+   * (the caller has opened the slash command menu and called preventDefault).
+   * Return `false` / `undefined` to let the normal Enter logic run.
+   */
+  readonly onSlashTrigger?: (e: KeyboardEvent) => boolean;
 }
 
 /** Narrowed `registerDomEvent` signature — mirrors Obsidian's overload. */
@@ -127,6 +134,7 @@ export function buildInputBar(
 
   register(textareaEl, "keydown", (e) => {
     if (options.onAtTrigger?.(e) === true) return;
+    if (options.onSlashTrigger?.(e) === true) return;
     if (e.isComposing) return;
     if (e.key !== "Enter") return;
     if (e.shiftKey) return;
