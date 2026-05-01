@@ -1,8 +1,10 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import { VIEW_TYPE_CLAUDE_WEBVIEW } from "../constants";
+import { FileSuggestModal } from "../file-suggest-modal";
 import { buildLayout, type WebviewLayout } from "./ui/layout";
 import { createBus, type Bus } from "./event-bus";
 import { buildInputBar, type InputBar } from "./ui/input-bar";
+import { handleAtKey } from "./ui/at-mention-trigger";
 import {
   SessionController,
   type SpawnImpl,
@@ -608,7 +610,21 @@ export class ClaudeWebviewView extends ItemView {
       }
     }
 
-    this.inputBar = buildInputBar(this.layout.inputRowEl, bus);
+    this.inputBar = buildInputBar(this.layout.inputRowEl, bus, {
+      onAtTrigger: (e) => {
+        const ta = this.inputBar?.textareaEl;
+        if (!ta) return false;
+        return handleAtKey(
+          {
+            textarea: ta,
+            openModal: (onSelect, onDismiss) => {
+              new FileSuggestModal(this.app, onSelect, onDismiss).open();
+            },
+          },
+          e
+        );
+      },
+    });
   }
 
   async onClose(): Promise<void> {
