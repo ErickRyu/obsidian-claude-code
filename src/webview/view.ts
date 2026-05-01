@@ -11,6 +11,7 @@ import { createAtMentionDriver } from "./ui/at-mention-trigger";
 import {
   createSlashMenuDriver,
   listGlobalSlashCommands,
+  listPluginCommandsAndSkills,
   mergeSlashCommands,
   type SlashCommand,
 } from "./ui/slash-menu";
@@ -277,6 +278,12 @@ export class ClaudeWebviewView extends ItemView {
    * once per view (cheap directory read), null until populated.
    */
   private globalSlashCache: SlashCommand[] | null = null;
+  /**
+   * Plugin commands + skills discovered by walking installed_plugins.json.
+   * Loaded once per view; null until populated. Fills the gap between
+   * view open and the first message (when Claude CLI emits system.init).
+   */
+  private pluginSlashCache: SlashCommand[] | null = null;
   /**
    * Lifecycle handles for the inline popover drivers — invoked from
    * `onClose` so any open popover is torn down with the view.
@@ -642,13 +649,12 @@ export class ClaudeWebviewView extends ItemView {
         },
       });
       this.controller = controller;
-      // Eager start: spawn claude -p as soon as the view opens so
-      // `system.init` populates cliSlashCommands (~462 entries — full
-      // commands + skills + plugin list) before the user types `/`.
-      // Without this the popover only has the 62 entries from
-      // ~/.claude/commands until the first message is sent. stream-json
-      // input mode keeps stdin open, so the child waits patiently for
-      // the user's first prompt rather than exiting on empty stdin.
+      // Lazy start. Eager spawn doesn't help populate cliSlashCommands
+      // because Claude CLI only emits `system.init` AFTER the first
+      // user prompt arrives on stdin (verified empirically — direct
+      // `claude -p ...` with no stdin input emits hook_started events
+      // but never reaches system.init). Filesystem-based discovery
+      // (see ensurePluginCache below) covers the gap.
       const resumeId =
         runtime.resumeOnStart === true &&
         runtime.settings.lastSessionId.length > 0
@@ -657,7 +663,7 @@ export class ClaudeWebviewView extends ItemView {
 
       if (resumeId !== undefined) {
         controller.start(undefined, resumeId);
-      } else {
+      } else if (runtime.eagerStartForTests === true) {
         controller.start();
       }
 
@@ -782,6 +788,21 @@ export class ClaudeWebviewView extends ItemView {
           this.globalSlashCache = [];
         });
     }
+    if (this.pluginSlashCache === null) {
+      // eslint-disable-next-line no-console
+      console.log("[claude-webview] discovering plugin commands + skills via installed_plugins.json…");
+      void listPluginCommandsAndSkills()
+        .then((cmds) => {
+          this.pluginSlashCache = cmds;
+          // eslint-disable-next-line no-console
+          console.log(`[claude-webview] discovered ${cmds.length} plugin commands + skills`);
+        })
+        .catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.warn("[claude-webview] plugin discovery failed:", err);
+          this.pluginSlashCache = [];
+        });
+    }
 
     this.inputBar = buildInputBar(this.layout.inputRowEl, bus, {
       registerDomEvent: (el, type, handler) => {
@@ -861,7 +882,10 @@ export class ClaudeWebviewView extends ItemView {
     const merged = mergeSlashCommands(
       this.cliSlashCommands,
       this.userSlashCache ?? [],
-      this.globalSlashCache ?? [],
+      [
+        ...(this.globalSlashCache ?? []),
+        ...(this.pluginSlashCache ?? []),
+      ],
     );
     const q = query.toLowerCase();
     const filtered = q.length === 0

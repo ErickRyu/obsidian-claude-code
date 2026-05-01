@@ -14,7 +14,7 @@
 
 import type { PopoverItem, InlinePopoverHandle } from "./inline-popover";
 
-export type SlashCommandSource = "cli" | "user" | "global";
+export type SlashCommandSource = "cli" | "user" | "global" | "plugin";
 
 export interface SlashCommand {
   readonly name: string;
@@ -181,6 +181,132 @@ export function createSlashMenuDriver(runtime: SlashMenuRuntime): {
   };
 
   return { onInput, dispose: close };
+}
+
+/**
+ * Reads `~/.claude/plugins/installed_plugins.json` and discovers every
+ * installed plugin's `commands/*.md` files and `skills/<dir>/` folders.
+ * This mirrors what Claude CLI assembles into `system.init.slash_commands`,
+ * but without needing the CLI to spawn first. The CLI only emits
+ * `system.init` after the user's first prompt — without filesystem
+ * discovery the popover would be empty until a message is sent.
+ */
+export async function listPluginCommandsAndSkills(
+  homeDir: string | undefined = typeof process !== "undefined"
+    ? process.env.HOME ?? process.env.USERPROFILE
+    : undefined,
+): Promise<SlashCommand[]> {
+  if (!homeDir) return [];
+  let fsP: typeof import("node:fs/promises");
+  let pathMod: typeof import("node:path");
+  try {
+    fsP = (globalThis as unknown as { require: NodeRequire }).require("fs/promises");
+    pathMod = (globalThis as unknown as { require: NodeRequire }).require("path");
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[claude-webview] listPluginCommandsAndSkills: require failed:", err);
+    return [];
+  }
+
+  const installedJsonPath = pathMod.join(
+    homeDir,
+    ".claude",
+    "plugins",
+    "installed_plugins.json",
+  );
+  let manifest: { plugins?: Record<string, Array<{ installPath?: string }>> };
+  try {
+    const raw = await fsP.readFile(installedJsonPath, "utf-8");
+    manifest = JSON.parse(raw);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[claude-webview] listPluginCommandsAndSkills: read installed_plugins.json failed:",
+      err,
+    );
+    return [];
+  }
+
+  const plugins = manifest.plugins ?? {};
+  const out: SlashCommand[] = [];
+  const seen = new Set<string>();
+
+  const pushIfNew = (name: string, description?: string): void => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    out.push({ name, source: "plugin", description });
+  };
+
+  for (const instances of Object.values(plugins)) {
+    if (!Array.isArray(instances)) continue;
+    for (const inst of instances) {
+      const installPath = inst?.installPath;
+      if (!installPath || typeof installPath !== "string") continue;
+
+      // commands/*.md
+      try {
+        const cmdsDir = pathMod.join(installPath, "commands");
+        const entries = await fsP.readdir(cmdsDir);
+        for (const f of entries) {
+          if (!f.endsWith(".md")) continue;
+          let description: string | undefined;
+          try {
+            const content = await fsP.readFile(pathMod.join(cmdsDir, f), "utf-8");
+            const firstLine = content
+              .split("\n")
+              .find((l) => l.trim().length > 0 && !l.trim().startsWith("---"));
+            if (firstLine) description = firstLine.trim().replace(/^#\s*/, "").slice(0, 200);
+          } catch {
+            /* ignore */
+          }
+          pushIfNew(f.replace(/\.md$/, ""), description);
+        }
+      } catch {
+        /* commands/ may not exist */
+      }
+
+      // skills/<dir>/
+      try {
+        const skillsDir = pathMod.join(installPath, "skills");
+        const entries = await fsP.readdir(skillsDir, { withFileTypes: true });
+        for (const ent of entries) {
+          if (!ent.isDirectory()) continue;
+          let description: string | undefined;
+          try {
+            const skillMd = pathMod.join(skillsDir, ent.name, "SKILL.md");
+            const content = await fsP.readFile(skillMd, "utf-8");
+            // Try to grab description from frontmatter or first prose line.
+            const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+            if (fmMatch) {
+              const desc = fmMatch[1]
+                .split("\n")
+                .find((l) => l.startsWith("description:"));
+              if (desc) {
+                description = desc
+                  .replace(/^description:\s*/, "")
+                  .trim()
+                  .slice(0, 200);
+              }
+            }
+            if (!description) {
+              const firstLine = content
+                .split("\n")
+                .find((l) => l.trim().length > 0 && !l.trim().startsWith("---"));
+              if (firstLine) {
+                description = firstLine.trim().replace(/^#\s*/, "").slice(0, 200);
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+          pushIfNew(ent.name, description);
+        }
+      } catch {
+        /* skills/ may not exist */
+      }
+    }
+  }
+  return out;
 }
 
 /**
