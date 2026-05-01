@@ -2,73 +2,75 @@ export interface AtMentionDeps {
   readonly textarea: HTMLTextAreaElement;
   readonly openModal: (
     onSelect: (path: string) => void,
-    onDismiss: () => void
+    onDismiss: () => void,
   ) => void;
 }
 
 /**
- * Returns true when the `@` key should open the file picker modal.
+ * Decides whether the current `input` event corresponds to a fresh `@`
+ * keystroke that should open the file picker.
  *
- * Conditions that must ALL be true:
- *   - event.key === "@"
- *   - no modifier keys (metaKey, ctrlKey, altKey)
- *   - not inside an IME composition sequence (isComposing)
- *   - cursor is at position 0, OR the character immediately before the
- *     cursor is whitespace (so mid-word `@` like `email@example` is ignored)
+ * Returns `{ atPos }` (the position of the `@` in the textarea) when the
+ * trigger condition matches, `null` otherwise. Trigger requires:
+ *   - the just-inserted data is exactly "@" (rules out paste of "@foo",
+ *     IME composition end, autocomplete, etc.)
+ *   - the @ is at the start of the textarea OR is preceded by whitespace
+ *     (so a mid-word `email@example` does not open the modal)
  */
-export function shouldTriggerAt(
+export function shouldTriggerOnInput(
   textarea: HTMLTextAreaElement,
-  e: KeyboardEvent
-): boolean {
-  if (e.key !== "@") return false;
-  if (e.metaKey || e.ctrlKey || e.altKey) return false;
-  if (e.isComposing) return false;
+  e: Event,
+): { atPos: number } | null {
+  // happy-dom may not give us an InputEvent — feature-detect.
+  const ie = e as InputEvent;
+  if ("isComposing" in ie && ie.isComposing === true) return null;
+  if ("inputType" in ie && ie.inputType !== undefined && ie.inputType !== "insertText") {
+    return null;
+  }
+  if ("data" in ie && ie.data !== undefined && ie.data !== "@") return null;
 
   const pos = textarea.selectionStart ?? 0;
-  if (pos === 0) return true;
+  if (pos === 0) return null;
+  if (textarea.value[pos - 1] !== "@") return null;
 
-  const charBefore = textarea.value[pos - 1];
-  return /\s/.test(charBefore);
+  if (pos === 1) return { atPos: 0 };
+  const charBefore = textarea.value[pos - 2];
+  if (/\s/.test(charBefore)) return { atPos: pos - 1 };
+
+  return null;
 }
 
 /**
- * Intercepts the `@` key when the trigger condition is met.
+ * Hook this into the textarea's `input` event. Opens the file picker
+ * whenever the user just typed an `@` in a position that warrants it.
  *
- * Note: this does NOT call `preventDefault()`. We let the `@` flow into the
- * textarea (so the user sees what they typed) and capture its position.
- * On select, `replaceAtToken` swaps the `@` (and any query the user typed
- * after) with `@<path> `. On dismiss, the typed `@` simply stays in place.
+ * On select: replaces the typed `@` (and any query characters) with
+ * `@<path> ` via `replaceAtToken`.
+ * On dismiss: leaves the typed `@` in place (the user can keep typing
+ * normally).
  *
- * Returns `true` when it intercepts the event (caller should return early
- * so downstream handlers like Enter-to-send don't also fire).
+ * Returns `true` if the modal was opened, `false` otherwise.
  */
-export function handleAtKey(deps: AtMentionDeps, e: KeyboardEvent): boolean {
-  if (!shouldTriggerAt(deps.textarea, e)) return false;
+export function handleAtInput(deps: AtMentionDeps, e: Event): boolean {
+  const trigger = shouldTriggerOnInput(deps.textarea, e);
+  if (!trigger) return false;
 
-  // Capture the cursor position at keydown time — this is the offset where
-  // the browser is about to insert `@`. After the default key action runs,
-  // `selectionStart` will be `atPos + 1`. We don't preventDefault so the
-  // user sees their `@` immediately.
-  const atPos = deps.textarea.selectionStart ?? 0;
-
+  const { atPos } = trigger;
   deps.openModal(
     (path: string) => {
       replaceAtToken(deps.textarea, atPos, `@${path} `);
     },
     () => {
-      // Modal dismissed — the `@` already lives in the textarea, leave it
-      // alone so the user can keep typing or delete it manually.
+      // Modal dismissed — the typed @ stays in the textarea so the user
+      // can continue editing it manually.
     },
   );
-
   return true;
 }
 
 /**
  * Replaces the `@` token (from `atPos` up to the current cursor position)
- * with `replacement`. Used after the file picker resolves so the typed
- * `@` (and any query characters that landed before the modal stole focus)
- * become `@<path> `. Cursor lands at end of the replacement.
+ * with `replacement`. Used after the file picker resolves.
  */
 export function replaceAtToken(
   textarea: HTMLTextAreaElement,
@@ -91,14 +93,13 @@ export function replaceAtToken(
 }
 
 /**
- * Inserts `text` at the current selection / cursor position in `textarea`.
- * Any currently selected text is replaced by the insertion.
- * Moves the cursor to the end of the inserted text, then dispatches an
- * "input" event so auto-resize listeners fire.
+ * Inserts `text` at the current cursor / selection. Kept for callers that
+ * need a raw insertion (e.g. tests). Most production callers should prefer
+ * `replaceAtToken` so the typed `@` is consumed cleanly.
  */
 export function insertAtCursor(
   textarea: HTMLTextAreaElement,
-  text: string
+  text: string,
 ): void {
   const start = textarea.selectionStart ?? 0;
   const end = textarea.selectionEnd ?? start;

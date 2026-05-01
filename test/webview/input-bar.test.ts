@@ -188,34 +188,24 @@ describe("buildInputBar — Phase 3 input bar runtime (3-8)", () => {
     bar.dispose();
   });
 
-  it("onAtTrigger short-circuits before Enter handling", () => {
-    const { root, win } = mountRoot();
+  it("onAtInput receives every input event on the textarea", () => {
+    const { root } = mountRoot();
     const bus = createBus();
-    const seen: string[] = [];
-    bus.on("ui.send", (e) => seen.push(e.text));
 
-    const recordedEvents: KeyboardEvent[] = [];
-    const bar = buildInputBar(root, bus, {
-      onAtTrigger: (e) => {
-        recordedEvents.push(e);
-        // Intercept plain Enter; pass through Cmd+Enter
-        return e.key === "Enter" && !e.metaKey && !e.ctrlKey;
-      },
-    });
-    bar.textareaEl.value = "test message";
+    const onAtInput = vi.fn();
+    const bar = buildInputBar(root, bus, { onAtInput });
 
-    // Plain Enter with onAtTrigger returning true → ui.send NOT emitted
-    keydown(bar.textareaEl, { key: "Enter" });
-    expect(recordedEvents).toHaveLength(1);
-    expect(seen).toHaveLength(0);
+    // Simulate a typed character that fires an input event.
+    bar.textareaEl.value = "@";
+    bar.textareaEl.dispatchEvent(
+      new (root.ownerDocument!.defaultView as unknown as { Event: typeof Event }).Event(
+        "input",
+        { bubbles: true },
+      ),
+    );
 
-    // Cmd+Enter with onAtTrigger returning false → falls through → ui.send emitted
-    keydown(bar.textareaEl, { key: "Enter", metaKey: true });
-    expect(recordedEvents).toHaveLength(2);
-    expect(seen).toEqual(["test message"]);
-
+    expect(onAtInput).toHaveBeenCalledOnce();
     bar.dispose();
-    void win;
   });
 
   it("onSlashTrigger short-circuits before Enter handling", () => {

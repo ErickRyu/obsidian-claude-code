@@ -4,7 +4,7 @@ import { FileSuggestModal } from "../file-suggest-modal";
 import { buildLayout, type WebviewLayout } from "./ui/layout";
 import { createBus, type Bus } from "./event-bus";
 import { buildInputBar, type InputBar } from "./ui/input-bar";
-import { handleAtKey } from "./ui/at-mention-trigger";
+import { handleAtInput } from "./ui/at-mention-trigger";
 import {
   handleSlashKey,
   mergeSlashCommands,
@@ -744,10 +744,10 @@ export class ClaudeWebviewView extends ItemView {
       registerDomEvent: (el, type, handler) => {
         this.registerDomEvent(el, type, handler);
       },
-      onAtTrigger: (e) => {
+      onAtInput: (e) => {
         const ta = this.inputBar?.textareaEl;
-        if (!ta) return false;
-        return handleAtKey(
+        if (!ta) return;
+        handleAtInput(
           {
             textarea: ta,
             openModal: (onSelect, onDismiss) => {

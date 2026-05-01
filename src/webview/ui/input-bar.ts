@@ -31,12 +31,13 @@ export interface InputBarOptions {
    */
   readonly registerDomEvent?: DomEventRegistrar;
   /**
-   * Optional `@`-key handler invoked at the start of the keydown listener,
-   * before Enter handling. Return `true` to short-circuit further processing
-   * (the caller has opened the file picker modal and called preventDefault).
-   * Return `false` / `undefined` to let the normal Enter logic run.
+   * Optional `input`-event handler. Receives every `input` event on the
+   * textarea (after the browser has applied the keystroke). Used by the
+   * `@` file-picker trigger so the typed `@` lands in the textarea cleanly
+   * before the modal opens — avoids the keydown race that put the `@`
+   * into the modal's search input instead of the textarea.
    */
-  readonly onAtTrigger?: (e: KeyboardEvent) => boolean;
+  readonly onAtInput?: (e: Event) => void;
   /**
    * Optional `/`-key handler invoked at the start of the keydown listener,
    * before Enter handling. Return `true` to short-circuit further processing
@@ -133,7 +134,6 @@ export function buildInputBar(
   });
 
   register(textareaEl, "keydown", (e) => {
-    if (options.onAtTrigger?.(e) === true) return;
     if (options.onSlashTrigger?.(e) === true) return;
     if (e.isComposing) return;
     if (e.key !== "Enter") return;
@@ -142,7 +142,8 @@ export function buildInputBar(
     submit();
   });
 
-  register(textareaEl, "input", () => {
+  register(textareaEl, "input", (e) => {
+    options.onAtInput?.(e);
     autoResize();
   });
 
