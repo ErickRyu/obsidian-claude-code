@@ -1,8 +1,20 @@
-import { ItemView, WorkspaceLeaf } from "obsidian";
+import { ItemView, WorkspaceLeaf, prepareFuzzySearch, TFile } from "obsidian";
 import { VIEW_TYPE_CLAUDE_WEBVIEW } from "../constants";
 import { buildLayout, type WebviewLayout } from "./ui/layout";
 import { createBus, type Bus } from "./event-bus";
 import { buildInputBar, type InputBar } from "./ui/input-bar";
+import {
+  mountInlinePopover,
+  type PopoverItem,
+} from "./ui/inline-popover";
+import { createAtMentionDriver } from "./ui/at-mention-trigger";
+import {
+  createSlashMenuDriver,
+  listGlobalSlashCommands,
+  listPluginCommandsAndSkills,
+  mergeSlashCommands,
+  type SlashCommand,
+} from "./ui/slash-menu";
 import {
   SessionController,
   type SpawnImpl,
@@ -230,6 +242,15 @@ interface RendererStates {
   readonly compactBoundary: CompactBoundaryRenderState;
 }
 
+function toFilePopoverItem(file: TFile): PopoverItem {
+  return {
+    id: file.path,
+    label: file.basename,
+    description: file.path,
+    metadata: file.path,
+  };
+}
+
 export class ClaudeWebviewView extends ItemView {
   private disposed = true;
   private closed = false;
@@ -239,6 +260,36 @@ export class ClaudeWebviewView extends ItemView {
   private controller: SessionController | null = null;
   private inputBar: InputBar | null = null;
   private statusBar: StatusBarHandle | null = null;
+  /**
+   * Phase 3 slash menu — CLI builtin command names captured from the
+   * `system.init` event's `slash_commands` field. Populated on first
+   * system.init; reset implicitly when the view closes (the class
+   * instance is recreated on each open).
+   */
+  private cliSlashCommands: string[] = [];
+  /**
+   * Phase 3 slash menu — user-defined commands from `.claude/commands/*.md`.
+   * Loaded lazily on first need; invalidated when vault files change.
+   * `null` means "not yet loaded".
+   */
+  private userSlashCache: SlashCommand[] | null = null;
+  /**
+   * Slash commands discovered under `~/.claude/commands/*.md`. Loaded
+   * once per view (cheap directory read), null until populated.
+   */
+  private globalSlashCache: SlashCommand[] | null = null;
+  /**
+   * Plugin commands + skills discovered by walking installed_plugins.json.
+   * Loaded once per view; null until populated. Fills the gap between
+   * view open and the first message (when Claude CLI emits system.init).
+   */
+  private pluginSlashCache: SlashCommand[] | null = null;
+  /**
+   * Lifecycle handles for the inline popover drivers — invoked from
+   * `onClose` so any open popover is torn down with the view.
+   */
+  private atDriverDispose: (() => void) | null = null;
+  private slashDriverDispose: (() => void) | null = null;
   /**
    * 2026-04-29 dogfood Issue #2 — stay pinned to the bottom of the cards
    * region while streaming, but yield to the user the moment they
@@ -275,6 +326,69 @@ export class ClaudeWebviewView extends ItemView {
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 3 — slash menu helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Reads user-defined slash commands from `<vault>/.claude/commands/*.md`.
+   * Each file contributes one SlashCommand: name = filename without extension,
+   * description = first non-empty line of the file content.
+   * Silently returns [] on any error (vault not configured, path missing, etc.).
+   */
+  private async listUserSlashCommands(): Promise<SlashCommand[]> {
+    const adapter = this.app.vault.adapter;
+    try {
+      const exists = await adapter.exists(".claude/commands");
+      if (!exists) return [];
+    } catch {
+      return [];
+    }
+
+    let listing: { files: string[]; folders: string[] };
+    try {
+      listing = await adapter.list(".claude/commands");
+    } catch {
+      return [];
+    }
+
+    // Guard for both possible shapes (spec note about adapter.list)
+    const files: string[] = Array.isArray(listing?.files) ? listing.files : [];
+    const mdFiles = files.filter((f) => f.endsWith(".md"));
+
+    const results: SlashCommand[] = [];
+    for (const filePath of mdFiles) {
+      try {
+        const content = await adapter.read(filePath);
+        const firstNonEmpty = content
+          .split("\n")
+          .map((l) => l.trim())
+          .find((l) => l.length > 0);
+        const baseName = filePath.split("/").pop()?.replace(/\.md$/, "") ?? "";
+        if (baseName.length === 0) continue;
+        results.push({
+          name: baseName,
+          source: "user",
+          description: firstNonEmpty,
+        });
+      } catch {
+        // Skip unreadable files — continue silently.
+        // eslint-disable-next-line no-console
+        console.warn(`[claude-webview] Could not read slash command file: ${filePath}`);
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Ensures the user slash command cache is populated.
+   * Idempotent — no-op if already loaded.
+   */
+  private async ensureUserSlashCommands(): Promise<void> {
+    if (this.userSlashCache !== null) return;
+    this.userSlashCache = await this.listUserSlashCommands();
   }
 
   getViewType(): string {
@@ -420,9 +534,61 @@ export class ClaudeWebviewView extends ItemView {
       const layout = this.layout;
       const states = this.states;
       if (!layout || !states) return;
+      // Phase 3 slash menu — capture CLI slash commands from system.init.
+      if (
+        e.event.type === "system" &&
+        e.event.subtype === "init"
+      ) {
+        // eslint-disable-next-line no-console
+        console.log("[claude-webview] system.init event:", e.event);
+        // eslint-disable-next-line no-console
+        console.log(
+          "[claude-webview] system.init.slash_commands:",
+          (e.event as { slash_commands?: unknown }).slash_commands,
+        );
+      }
+      if (
+        e.event.type === "system" &&
+        e.event.subtype === "init" &&
+        Array.isArray(e.event.slash_commands)
+      ) {
+        this.cliSlashCommands = e.event.slash_commands;
+        // Kick off user command cache load opportunistically so it's warm
+        // by the time the user presses "/".
+        this.ensureUserSlashCommands().catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.warn("[claude-webview] ensureUserSlashCommands failed:", err);
+        });
+      }
       this.dispatchStreamEvent(e.event, layout, states, doc);
       this.scrollToBottomIfPinned();
     });
+
+    // Phase 3 — invalidate user slash cache when .claude/commands/ changes.
+    // Guard vault.on — test harnesses may provide a minimal or absent app.
+    if (typeof this.app?.vault?.on === "function") {
+      this.registerEvent(
+        this.app.vault.on("create", (file: { path: string }) => {
+          if (file.path.startsWith(".claude/commands/")) {
+            this.userSlashCache = null;
+          }
+        })
+      );
+      this.registerEvent(
+        this.app.vault.on("delete", (file: { path: string }) => {
+          if (file.path.startsWith(".claude/commands/")) {
+            this.userSlashCache = null;
+          }
+        })
+      );
+      this.registerEvent(
+        this.app.vault.on("rename", (file: { path: string }) => {
+          if (file.path.startsWith(".claude/commands/")) {
+            this.userSlashCache = null;
+          }
+        })
+      );
+    }
 
     const runtime = this.runtime;
     if (runtime) {
@@ -483,23 +649,21 @@ export class ClaudeWebviewView extends ItemView {
         },
       });
       this.controller = controller;
-      // Lazy start: don't spawn claude -p until the user sends the first
-      // message. `claude -p` without a prompt argument + --input-format
-      // stream-json may exit immediately if no stdin arrives fast enough.
-      // By deferring spawn to the first ui.send, the prompt argument
-      // carries the user's text and the session starts reliably.
+      // Lazy start. Eager spawn doesn't help populate cliSlashCommands
+      // because Claude CLI only emits `system.init` AFTER the first
+      // user prompt arrives on stdin (verified empirically — direct
+      // `claude -p ...` with no stdin input emits hook_started events
+      // but never reaches system.init). Filesystem-based discovery
+      // (see ensurePluginCache below) covers the gap.
       const resumeId =
         runtime.resumeOnStart === true &&
         runtime.settings.lastSessionId.length > 0
           ? runtime.settings.lastSessionId
           : undefined;
 
-      // For resume, start immediately (the session has prior context).
       if (resumeId !== undefined) {
         controller.start(undefined, resumeId);
       } else if (runtime.eagerStartForTests === true) {
-        // Test-only path: pre-71c4f23 lifecycle/render tests assume a
-        // spawned child after onOpen. See WebviewViewRuntime.eagerStartForTests.
         controller.start();
       }
 
@@ -608,13 +772,149 @@ export class ClaudeWebviewView extends ItemView {
       }
     }
 
-    this.inputBar = buildInputBar(this.layout.inputRowEl, bus);
+    // Kick off global ~/.claude/commands load opportunistically.
+    if (this.globalSlashCache === null) {
+      // eslint-disable-next-line no-console
+      console.log("[claude-webview] loading global slash commands from ~/.claude/commands…");
+      void listGlobalSlashCommands()
+        .then((cmds) => {
+          this.globalSlashCache = cmds;
+          // eslint-disable-next-line no-console
+          console.log(`[claude-webview] loaded ${cmds.length} global slash commands`);
+        })
+        .catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.warn("[claude-webview] global slash command load failed:", err);
+          this.globalSlashCache = [];
+        });
+    }
+    if (this.pluginSlashCache === null) {
+      // eslint-disable-next-line no-console
+      console.log("[claude-webview] discovering plugin commands + skills via installed_plugins.json…");
+      void listPluginCommandsAndSkills()
+        .then((cmds) => {
+          this.pluginSlashCache = cmds;
+          // eslint-disable-next-line no-console
+          console.log(`[claude-webview] discovered ${cmds.length} plugin commands + skills`);
+        })
+        .catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.warn("[claude-webview] plugin discovery failed:", err);
+          this.pluginSlashCache = [];
+        });
+    }
+
+    this.inputBar = buildInputBar(this.layout.inputRowEl, bus, {
+      registerDomEvent: (el, type, handler) => {
+        this.registerDomEvent(el, type, handler);
+      },
+    });
+
+    // Build inline-popover drivers AFTER inputBar so we can close over
+    // its textareaEl. Each driver owns at most one popover at a time
+    // and listens to the textarea's `input` event.
+    const textarea = this.inputBar.textareaEl;
+    const anchor: HTMLElement = textarea;
+
+    const atDriver = createAtMentionDriver({
+      textarea,
+      searchFiles: (query) => this.searchVaultFiles(query),
+      openPopover: (items, onSelect, onDismiss) =>
+        mountInlinePopover({
+          anchor,
+          items,
+          onSelect,
+          onDismiss,
+          emptyMessage: "No vault files match",
+        }),
+    });
+    this.atDriverDispose = atDriver.dispose;
+
+    const slashDriver = createSlashMenuDriver({
+      textarea,
+      searchCommands: (query) => this.searchSlashCommands(query),
+      openPopover: (items, onSelect, onDismiss) =>
+        mountInlinePopover({
+          anchor,
+          items,
+          onSelect,
+          onDismiss,
+          emptyMessage: "No slash commands match",
+        }),
+    });
+    this.slashDriverDispose = slashDriver.dispose;
+
+    this.registerDomEvent(textarea, "input", (e) => {
+      atDriver.onInput(e);
+      slashDriver.onInput(e);
+    });
+  }
+
+  /**
+   * Fuzzy-search vault files for the @ popover. Returns up to 30 results
+   * sorted by match score; when query is empty, returns the 30 most
+   * recently modified notes.
+   */
+  private searchVaultFiles(query: string): PopoverItem[] {
+    const files = this.app?.vault?.getFiles?.() ?? [];
+    if (query.length === 0) {
+      return files
+        .slice()
+        .sort((a, b) => b.stat.mtime - a.stat.mtime)
+        .slice(0, 30)
+        .map(toFilePopoverItem);
+    }
+    const fuzzy = prepareFuzzySearch(query);
+    const ranked: Array<{ file: TFile; score: number }> = [];
+    for (const f of files) {
+      const m = fuzzy(f.path);
+      if (m) ranked.push({ file: f, score: m.score });
+    }
+    ranked.sort((a, b) => b.score - a.score);
+    return ranked.slice(0, 30).map(({ file }) => toFilePopoverItem(file));
+  }
+
+  /**
+   * Returns the merged + filtered slash command list. Sources merged in
+   * priority order: CLI builtins (canonical, populated after first message),
+   * vault `.claude/commands/`, global `~/.claude/commands/`, and every
+   * plugin discovered via `installed_plugins.json` (commands + skills).
+   * Substring filter (case-insensitive) on the command name.
+   */
+  private searchSlashCommands(query: string): PopoverItem[] {
+    const merged = mergeSlashCommands(
+      this.cliSlashCommands,
+      this.userSlashCache ?? [],
+      [
+        ...(this.globalSlashCache ?? []),
+        ...(this.pluginSlashCache ?? []),
+      ],
+    );
+    const q = query.toLowerCase();
+    const filtered = q.length === 0
+      ? merged
+      : merged.filter((c) => c.name.toLowerCase().includes(q));
+    return filtered.slice(0, 30).map((c) => ({
+      id: `${c.source}:${c.name}`,
+      label: `/${c.name}`,
+      description: c.description,
+      badge: c.source,
+      metadata: c.name,
+    }));
   }
 
   async onClose(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     this.disposed = true;
+    if (this.atDriverDispose) {
+      try { this.atDriverDispose(); } catch { /* dispose must not throw */ }
+      this.atDriverDispose = null;
+    }
+    if (this.slashDriverDispose) {
+      try { this.slashDriverDispose(); } catch { /* dispose must not throw */ }
+      this.slashDriverDispose = null;
+    }
     if (this.controller) {
       try {
         this.controller.dispose();

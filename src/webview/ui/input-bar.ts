@@ -4,8 +4,10 @@
  * Assembles the message-composition UI into the `inputRowEl` slot:
  *   - `<textarea>` with aria-label, auto-resize on input, 2-row default.
  *   - `<button>` Send with aria-label.
- *   - Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) → submit.
- *   - Plain Enter inserts a newline (unchanged default browser behavior).
+ *   - Plain Enter → submit (chat-app standard).
+ *   - Shift+Enter → newline (browser default, falls through).
+ *   - Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) → also submit (backwards-compat).
+ *   - Enter during IME composition → fall through (do not submit mid-composition).
  *
  * On submit: emit `{kind:'ui.send', text}` with the trimmed value, then
  * clear the textarea.  Empty / whitespace-only text is a no-op.
@@ -28,6 +30,21 @@ export interface InputBarOptions {
    * `target.addEventListener` and are explicitly removed on `dispose()`.
    */
   readonly registerDomEvent?: DomEventRegistrar;
+  /**
+   * Optional `input`-event handler. Receives every `input` event on the
+   * textarea (after the browser has applied the keystroke). Used by the
+   * `@` file-picker trigger so the typed `@` lands in the textarea cleanly
+   * before the modal opens — avoids the keydown race that put the `@`
+   * into the modal's search input instead of the textarea.
+   */
+  readonly onAtInput?: (e: Event) => void;
+  /**
+   * Optional handler called on every `input` event AFTER `onAtInput`.
+   * Used by the / slash command popover. Same rationale as `onAtInput`:
+   * the `/` lands in the textarea before this fires, eliminating the
+   * keydown-vs-modal race.
+   */
+  readonly onSlashInput?: (e: Event) => void;
 }
 
 /** Narrowed `registerDomEvent` signature — mirrors Obsidian's overload. */
@@ -117,13 +134,16 @@ export function buildInputBar(
   });
 
   register(textareaEl, "keydown", (e) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      submit();
-    }
+    if (e.isComposing) return;
+    if (e.key !== "Enter") return;
+    if (e.shiftKey) return;
+    e.preventDefault();
+    submit();
   });
 
-  register(textareaEl, "input", () => {
+  register(textareaEl, "input", (e) => {
+    options.onAtInput?.(e);
+    options.onSlashInput?.(e);
     autoResize();
   });
 

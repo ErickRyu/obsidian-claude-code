@@ -2,6 +2,38 @@
 
 All notable changes to obsidian-claude-code will be documented in this file.
 
+## [0.6.2] - 2026-05-01
+
+Webview input UX overhaul. Three phases (Enter-to-send, `@` file picker, `/` slash menu) shipped behind a unified inline popover, plus filesystem-based command discovery so the slash menu is populated the moment the view opens — no more "type something first to see your commands". The `@@<path>` duplication bug from the first pass is fixed via a fundamental architecture change: triggers now fire on the textarea's `input` event, not `keydown`, so there's no race with the modal's focus shift.
+
+### Added
+- **Plain Enter sends the message; Shift+Enter inserts a newline.** Chat-app standard. Cmd/Ctrl+Enter still submit (backwards-compat). IME composition (`isComposing`) is guarded so Korean / Japanese / Chinese input completes naturally without firing send mid-character.
+- **`@` opens an inline file picker.** Type `@` (at start of input or after whitespace) and a popover lists vault notes, fuzzy-ranked by `prepareFuzzySearch`. Empty query shows the 30 most recently modified notes. Selection rewrites the typed `@<query>` to `@<path> ` so the user sees no duplication.
+- **`/` opens an inline slash command menu.** Type `/` at the start of an empty input. Source merge: CLI builtins from `system.init.slash_commands` (~462 entries once Claude responds to the first message) + vault `.claude/commands/*.md` + global `~/.claude/commands/*.md` + every plugin discovered via `~/.claude/plugins/installed_plugins.json` (`<installPath>/commands/*.md` + `<installPath>/skills/<dir>/`). Filesystem discovery runs at view open, so the menu is populated before the user sends their first message — Claude CLI itself only emits the canonical list AFTER the first prompt arrives on stdin, so without filesystem discovery the popover would be empty until then.
+- **Inline popover replaces SuggestModal for both `@` and `/` triggers.** Anchors above (or below) the textarea via `getBoundingClientRect`, no backdrop, focus stays on the textarea. Keyboard nav: ↑↓ to move, Enter to select, Esc to dismiss; click-outside also dismisses. Mouse hover updates selection. `mousedown` selection (not `click`) preventDefaults the focus shift so the textarea stays selected after pick.
+
+### Changed
+- **`@` and `/` trigger detection moved from `keydown` to the textarea's `input` event.** The `keydown` approach raced with the modal's focus shift — when `modal.open()` ran inside the keydown handler, focus shifted to the modal's search input before the browser's default key action fired, so the typed character landed in the modal instead of the textarea (or duplicated when both happened). The `input` event fires AFTER the character is in the textarea, eliminating the race entirely. Detection uses `InputEvent.data === '@'` / `'/'` and `inputType === 'insertText'` to filter out paste, IME, and autocomplete.
+- **Slash command source extended from 2 to 4 sources.** Previously only CLI builtins + vault `.claude/commands/`. Now also includes global `~/.claude/commands/*.md` and full plugin discovery (commands + skills) via `installed_plugins.json`. Custom plugin install paths (e.g. `~/MyDocument/claude-config/plugins/sungjin-core`) are picked up automatically because the manifest carries the canonical `installPath` for each plugin instance.
+
+### Fixed
+- **`@@<path>` duplication when picking a file from `@` modal.** Root cause: `e.preventDefault()` in the keydown handler did NOT suppress the default key insertion under Obsidian/Electron, so the typed `@` landed in the textarea AND `insertAtCursor` then prepended another `@<path>`. Fixed by switching to input-event detection (so we work WITH the browser's default action, not against it) and replacing `insertAtCursor` with `replaceAtToken` (which swaps `@<query>` → `@<path> ` rather than prepending).
+- **Global slash commands failing to load.** The earlier dynamic `import("node:fs/promises")` was emitted by esbuild as `import("fs/promises")`, which Obsidian's renderer rejects with `TypeError: Failed to resolve module specifier 'fs/promises'` (Electron's strict ESM resolver doesn't accept Node builtins via dynamic import). Switched to `globalThis.require("fs/promises")` so the call routes through the CommonJS loader, which always resolves Node builtins under Obsidian.
+
+### Internal
+- **New module `src/webview/ui/inline-popover.ts`** (~250 LOC). Generic, source-agnostic — both `@` and `/` triggers reuse the same component.
+- **`createAtMentionDriver` and `createSlashMenuDriver`** in `at-mention-trigger.ts` and `slash-menu.ts` own one popover instance each and hook into the textarea's `input` event. Lifecycle handles dispose to prevent listener leaks across view re-mounts.
+- **`listPluginCommandsAndSkills`** scans `installed_plugins.json` once per view open. Reads `commands/*.md` (description = first non-frontmatter line) and `skills/<dir>/SKILL.md` (description = frontmatter `description:` field, falls back to first prose line). Errors silenced — folder missing or unreadable yields `[]`.
+
+### Verified
+- 709/721 vitest pass. The 12 failures are pre-existing artifact-gate tests unrelated to this work (`completion-gate.test.ts`, `sub-ac-4-ac-1-mh-10-mh-11-smoke.test.ts`) — they look for runtime artifacts that don't exist in this branch's filesystem.
+- ~50 new test cases across `at-mention-trigger.test.ts`, `slash-menu.test.ts`, `input-bar.test.ts` covering driver lifecycle, fresh-trigger detection, IME guards, paste-vs-typing, `replaceAtToken`, `mergeSlashCommands` precedence, dismiss/select callbacks.
+- `npm run build` clean.
+- Dogfooded in real Obsidian session: `/wee` matches `weekly-review` skill, `@` picker shows vault notes without `@@` duplication, plain Enter sends, Shift+Enter inserts newline, IME composition isn't disrupted.
+
+### Migration notes
+None — webview is opt-in via `uiMode: "webview"` and the input bar API is internal. Existing webview users get the new behavior on next reload.
+
 ## [0.6.1] - 2026-05-01
 
 First stable v0.6.x release. Three dogfood-driven UI fixes on top of beta.3 — the webview now stops drowning the conversation in tool plumbing, the Todo strip cleans up after itself, and the header status indicator stops pulsing during idle. No public API change.

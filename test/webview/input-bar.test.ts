@@ -6,7 +6,9 @@
  *   - Send click → bus.emit({kind:'ui.send', text}) with trimmed text.
  *   - Empty / whitespace-only text → no emit (blocks accidental sends).
  *   - Cmd+Enter AND Ctrl+Enter → emit (cross-platform).
- *   - Plain Enter (no modifier) → no emit (preserves newline insertion).
+ *   - Plain Enter (no modifier) → emit (chat-app UX: Enter to send).
+ *   - Shift+Enter → no emit (preserves newline insertion).
+ *   - Enter during IME composition → no emit (Korean/Japanese/Chinese input).
  *   - After send, textarea value is cleared.
  *   - registerDomEvent fallback: when the option is provided (Obsidian
  *     ItemView gives us this), listeners go through it (so cleanup on
@@ -27,7 +29,7 @@ function mountRoot(): { root: HTMLElement; win: Window } {
 
 function keydown(
   target: HTMLElement,
-  init: { key: string; metaKey?: boolean; ctrlKey?: boolean }
+  init: { key: string; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; isComposing?: boolean }
 ): { defaultPrevented: boolean } {
   const doc = target.ownerDocument as unknown as Document;
   const win = doc.defaultView as unknown as Window & typeof globalThis;
@@ -39,7 +41,11 @@ function keydown(
     cancelable: true,
     metaKey: init.metaKey ?? false,
     ctrlKey: init.ctrlKey ?? false,
+    shiftKey: init.shiftKey ?? false,
   });
+  if (init.isComposing) {
+    Object.defineProperty(e, "isComposing", { value: true });
+  }
   target.dispatchEvent(e);
   return { defaultPrevented: e.defaultPrevented };
 }
@@ -121,7 +127,22 @@ describe("buildInputBar — Phase 3 input bar runtime (3-8)", () => {
     bar.dispose();
   });
 
-  it("plain Enter (no modifier) does NOT emit — preserves newline insertion UX", () => {
+  it("plain Enter (no modifier) DOES emit — chat-app Enter-to-send UX", () => {
+    const { root } = mountRoot();
+    const bus = createBus();
+    const seen: string[] = [];
+    bus.on("ui.send", (e) => seen.push(e.text));
+
+    const bar = buildInputBar(root, bus);
+    bar.textareaEl.value = "hello";
+    const r = keydown(bar.textareaEl, { key: "Enter" });
+
+    expect(seen).toEqual(["hello"]);
+    expect(r.defaultPrevented).toBe(true);
+    bar.dispose();
+  });
+
+  it("Shift+Enter does NOT emit — preserves newline insertion", () => {
     const { root } = mountRoot();
     const bus = createBus();
     const seen: string[] = [];
@@ -129,7 +150,22 @@ describe("buildInputBar — Phase 3 input bar runtime (3-8)", () => {
 
     const bar = buildInputBar(root, bus);
     bar.textareaEl.value = "multiline";
-    const r = keydown(bar.textareaEl, { key: "Enter" });
+    const r = keydown(bar.textareaEl, { key: "Enter", shiftKey: true });
+
+    expect(seen).toHaveLength(0);
+    expect(r.defaultPrevented).toBe(false);
+    bar.dispose();
+  });
+
+  it("Enter during IME composition does NOT emit — preserves Korean/Japanese/Chinese input", () => {
+    const { root } = mountRoot();
+    const bus = createBus();
+    const seen: string[] = [];
+    bus.on("ui.send", (e) => seen.push(e.text));
+
+    const bar = buildInputBar(root, bus);
+    bar.textareaEl.value = "한글";
+    const r = keydown(bar.textareaEl, { key: "Enter", isComposing: true });
 
     expect(seen).toHaveLength(0);
     expect(r.defaultPrevented).toBe(false);
@@ -149,6 +185,44 @@ describe("buildInputBar — Phase 3 input bar runtime (3-8)", () => {
     // At least one click binding + one keydown binding + one input binding
     // registered via the option.
     expect(registerDomEvent.mock.calls.length).toBeGreaterThanOrEqual(3);
+    bar.dispose();
+  });
+
+  it("onAtInput receives every input event on the textarea", () => {
+    const { root } = mountRoot();
+    const bus = createBus();
+
+    const onAtInput = vi.fn();
+    const bar = buildInputBar(root, bus, { onAtInput });
+
+    // Simulate a typed character that fires an input event.
+    bar.textareaEl.value = "@";
+    bar.textareaEl.dispatchEvent(
+      new (root.ownerDocument!.defaultView as unknown as { Event: typeof Event }).Event(
+        "input",
+        { bubbles: true },
+      ),
+    );
+
+    expect(onAtInput).toHaveBeenCalledOnce();
+    bar.dispose();
+  });
+
+  it("onSlashInput receives every input event on the textarea", () => {
+    const { root } = mountRoot();
+    const bus = createBus();
+    const onSlashInput = vi.fn();
+    const bar = buildInputBar(root, bus, { onSlashInput });
+
+    bar.textareaEl.value = "/";
+    bar.textareaEl.dispatchEvent(
+      new (root.ownerDocument!.defaultView as unknown as { Event: typeof Event }).Event(
+        "input",
+        { bubbles: true },
+      ),
+    );
+
+    expect(onSlashInput).toHaveBeenCalledOnce();
     bar.dispose();
   });
 
