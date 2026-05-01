@@ -642,23 +642,22 @@ export class ClaudeWebviewView extends ItemView {
         },
       });
       this.controller = controller;
-      // Lazy start: don't spawn claude -p until the user sends the first
-      // message. `claude -p` without a prompt argument + --input-format
-      // stream-json may exit immediately if no stdin arrives fast enough.
-      // By deferring spawn to the first ui.send, the prompt argument
-      // carries the user's text and the session starts reliably.
+      // Eager start: spawn claude -p as soon as the view opens so
+      // `system.init` populates cliSlashCommands (~462 entries — full
+      // commands + skills + plugin list) before the user types `/`.
+      // Without this the popover only has the 62 entries from
+      // ~/.claude/commands until the first message is sent. stream-json
+      // input mode keeps stdin open, so the child waits patiently for
+      // the user's first prompt rather than exiting on empty stdin.
       const resumeId =
         runtime.resumeOnStart === true &&
         runtime.settings.lastSessionId.length > 0
           ? runtime.settings.lastSessionId
           : undefined;
 
-      // For resume, start immediately (the session has prior context).
       if (resumeId !== undefined) {
         controller.start(undefined, resumeId);
-      } else if (runtime.eagerStartForTests === true) {
-        // Test-only path: pre-71c4f23 lifecycle/render tests assume a
-        // spawned child after onOpen. See WebviewViewRuntime.eagerStartForTests.
+      } else {
         controller.start();
       }
 
