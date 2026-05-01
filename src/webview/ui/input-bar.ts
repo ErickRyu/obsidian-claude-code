@@ -30,6 +30,13 @@ export interface InputBarOptions {
    * `target.addEventListener` and are explicitly removed on `dispose()`.
    */
   readonly registerDomEvent?: DomEventRegistrar;
+  /**
+   * Optional handler invoked at the very start of the keydown listener,
+   * before Enter handling. Return `true` to short-circuit further
+   * processing of the event. Return `false` (or `undefined`) to let
+   * the existing Enter logic run normally.
+   */
+  readonly onAtTrigger?: (e: KeyboardEvent) => boolean;
 }
 
 /** Narrowed `registerDomEvent` signature — mirrors Obsidian's overload. */
@@ -119,6 +126,7 @@ export function buildInputBar(
   });
 
   register(textareaEl, "keydown", (e) => {
+    if (options.onAtTrigger?.(e) === true) return;
     if (e.isComposing) return;
     if (e.key !== "Enter") return;
     if (e.shiftKey) return;
